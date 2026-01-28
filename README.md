@@ -1,2 +1,4 @@
 # PolyGS
-This is the real thesis no joke
+
+> MSc. Geomatics Thesis: 
+> Gaussian Splatting to Piecewise-Planar Surfaces For 3D Building Reconstruction
