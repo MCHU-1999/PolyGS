@@ -2,7 +2,7 @@ import torch
 import numpy as np
 from torch_scatter import scatter_sum, scatter_mean
 from omegaconf import OmegaConf
-from pycut_pursuit.cp_d0_dist import cp_d0_dist
+from pycut_pursuit import cp_d0_dist
 from grid_graph import edge_list_to_forward_star
 
 from src.transforms import Transform
