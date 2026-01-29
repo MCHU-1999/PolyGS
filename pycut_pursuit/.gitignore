@@ -1,2 +1,6 @@
 bin/
 build/
+
+# ignore Python bytecode caches and compiled files
+__pycache__/
+**/__pycache__/
