@@ -5,8 +5,8 @@ import sys
 # locate wrappers and bin relative to this package (repo layout)
 _this_dir = os.path.dirname(__file__)
 _repo_root = os.path.abspath(os.path.join(_this_dir, ".."))
-_wrappers_dir = os.path.join(_repo_root, "parallel-cut-pursuit", "python", "wrappers")
-_bin_dir = os.path.join(_repo_root, "parallel-cut-pursuit", "python", "bin")
+_wrappers_dir = os.path.join(_repo_root, "pycut_pursuit", "python", "wrappers")
+_bin_dir = os.path.join(_repo_root, "pycut_pursuit", "python", "bin")
 
 # add them to sys.path (front) if they exist
 if os.path.isdir(_wrappers_dir) and _wrappers_dir not in sys.path:
@@ -21,7 +21,7 @@ try:
     from cp_prox_tv import cp_prox_tv
 except Exception as e:
     raise ImportError(
-        "pycut_pursuit: failed to import wrappers. Ensure parallel-cut-pursuit/python/wrappers "
-        "and parallel-cut-pursuit/python/bin exist or set PYTHONPATH appropriately."
+        "pycut_pursuit: failed to import wrappers. Ensure pycut_pursuit/python/wrappers "
+        "and pycut_pursuit/python/bin exist or set PYTHONPATH appropriately."
     ) from e
 # ...existing code...
