@@ -1,3 +1,8 @@
 .vscode/
 example_pointcloud/
+scan24/
+scan24_KSR/
+Barn/
+Barn_KSR/
+screenshots/
 .DS_Store
