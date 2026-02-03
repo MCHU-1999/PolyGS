@@ -3,6 +3,9 @@
 #include <CGAL/Point_set_3.h>
 #include <CGAL/Point_set_3/IO.h>
 #include <CGAL/IO/polygon_soup_io.h>
+#include <CGAL/Polygon_mesh_processing/repair_polygon_soup.h>
+#include <CGAL/Polygon_mesh_processing/orient_polygon_soup.h>
+
 #include <filesystem>
 #include <iostream>
 #include <string>
@@ -66,24 +69,24 @@ int main(int argc, char** argv) {
     return EXIT_FAILURE;
   }
  
-  auto param = CGAL::parameters::maximum_distance(0.01)  // the maximum distance from a point to a plane
-    .maximum_angle(5)               // the maximum angle in degrees between the normal associated with a point and the normal of a plane
+  auto param = CGAL::parameters::k_neighbors(8)
+    .maximum_distance(0.1)          // the maximum distance from a point to a plane
+    .maximum_angle(10)              // the maximum angle in degrees between the normal associated with a point and the normal of a plane
     .minimum_region_size(10)        // the minimum number of points a region must have
-    .reorient_bbox(false)           // Setting reorient_bbox to true aligns the x-axis of the bounding box with the direction of the largest variation in horizontal direction of the input data while maintaining the z-axis.
+    .reorient_bbox(true)            // Setting reorient_bbox to true aligns the x-axis of the bounding box with the direction of the largest variation in horizontal direction of the input data while maintaining the z-axis.
     .regularize_parallelism(true)   // whether parallelism should be regularized or not
     .regularize_coplanarity(true)   // whether coplanarity should be regularized or not
-    .angle_tolerance(5)             // Idk
-    .maximum_offset(0.01);          // maximum distance between two parallel planes to be considered coplanar
+    .angle_tolerance(10)            // Idk
+    .maximum_offset(0.02);          // maximum distance between two parallel planes to be considered coplanar
 
   // Algorithm.
   KSR ksr(point_set, param);
- 
   ksr.detection_and_partition(2, param);
- 
+
   std::vector<Point_3> vtx;
   std::vector<std::vector<std::size_t> > polylist;
- 
-  std::vector<FT> lambdas{0.5, 0.7, 0.8, 0.9};
+
+  std::vector<FT> lambdas{0.1, 0.3, 0.5, 0.7};
  
   bool non_empty = false;
  
@@ -91,10 +94,16 @@ int main(int argc, char** argv) {
     vtx.clear();
     polylist.clear();
  
-    ksr.reconstruct(l, std::back_inserter(vtx), std::back_inserter(polylist));
+    ksr.reconstruct_with_ground(l, std::back_inserter(vtx), std::back_inserter(polylist));
  
     if (polylist.size() > 0) {
       non_empty = true;
+
+      // Repair the soup: removes duplicates and degenerated faces
+      CGAL::Polygon_mesh_processing::repair_polygon_soup(vtx, polylist);
+      // Orient the soup: fixes inconsistent normals which cause non-manifold errors
+      CGAL::Polygon_mesh_processing::orient_polygon_soup(vtx, polylist);
+
       std::string lstr = std::to_string(CGAL::to_double(l));
       std::string filename = "polylist_" + lstr + ".ply";
       fs::path outp = outdir / filename;
