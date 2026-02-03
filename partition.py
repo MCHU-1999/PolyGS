@@ -10,7 +10,6 @@ import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 from plyfile import PlyData, PlyElement
 
-
 # Features list
 FEATURE_KEYS = [
     'x', 'y', 'z',                      # Just XYZ
@@ -22,14 +21,13 @@ FEATURE_KEYS = [
 ]
 # Weights
 WEIGHTS = np.array([
-    3, 3, 3,
-    10, 10, 10,
+    4, 4, 4,
+    20, 20, 20,
     1, 1, 1,
     0, 0, 0,
     0, 0, 0, 0,
     0
 ], dtype=np.float32)
-
 
 def build_forward_star(n, neigh_lists):
     # neigh_lists: list of neighbor lists for each node (directed)
@@ -92,6 +90,83 @@ def filter_large_gaussians(X, fraction=0.25):
 
     return X[keep_mask]
 
+# remove rows with non-finite coordinates (first 3 columns)
+def remove_nonfinite_coords(X):
+    """Remove rows from X that have non-finite coordinates.
+
+    Parameters
+    - X: numpy array (n x D)
+    - coords: optional (n x 3) array to check instead of X[:, :3]
+    - verbose: print examples of bad rows
+    - max_examples: number of bad rows to print when verbose=True
+
+    Returns
+    - X_filtered: filtered numpy array
+    - finite_mask: boolean mask of kept rows
+    """
+
+    coords = X[:, :3]
+    finite_mask = np.isfinite(coords).all(axis=1)
+    if finite_mask.all():
+        return X, finite_mask
+
+    n_bad = int((~finite_mask).sum())
+    print(f'Removing {n_bad} points with non-finite coordinates')
+
+    X_filtered = X[finite_mask]
+    if X_filtered.size == 0:
+        raise RuntimeError('No finite points remain after filtering')
+    return X_filtered
+
+def trim_long_edgs(neigh, dists, X, coords, fraction=0.25):
+    """
+    Trim the longest {fraction} of edges (by distance).
+
+    This removes the top `fraction` of directed edges by distance, but ensures
+    each node keeps at least one neighbor (its nearest) to avoid isolating
+    vertices completely. Returns (neigh, dists, X, coords) with trimmed lists.
+    """
+    if fraction <= 0.0:
+        return neigh, dists, X, coords
+
+    # Flatten all distances to compute global threshold
+    flat = np.hstack([arr for arr in dists]) if len(dists) > 0 else np.array([], dtype=np.float32)
+    if flat.size == 0:
+        return neigh, dists, X, coords
+
+    thresh = float(np.quantile(flat, 1.0 - fraction))
+
+    n = len(neigh)
+    new_neigh = []
+    new_dists = []
+    removed = 0
+    restored = 0
+    total = 0
+
+    for i in range(n):
+        lst = []
+        ld = []
+        for k, j in enumerate(neigh[i]):
+            total += 1
+            dij = float(dists[i][k])
+            if dij <= thresh:
+                lst.append(int(j))
+                ld.append(dij)
+            else:
+                removed += 1
+
+        # ensure at least one neighbor remains (restore nearest if necessary)
+        if len(lst) == 0 and len(neigh[i]) > 0:
+            kmin = int(np.argmin(dists[i]))
+            lst.append(int(neigh[i][kmin]))
+            ld.append(float(dists[i][kmin]))
+            restored += 1
+
+        new_neigh.append(lst)
+        new_dists.append(np.array(ld, dtype=np.float32))
+
+    print(f'trim_long_edgs: removed {removed} / {total} directed edges (restored {restored} nearest where needed)')
+    return new_neigh, new_dists, X, coords
 
 def keep_largest_connected_component(neigh, dists, X, coords):
     """Keep only the largest connected component from a directed neighbor list.
@@ -159,10 +234,22 @@ def keep_largest_connected_component(neigh, dists, X, coords):
         print('Graph already fully connected; nothing to do.')
         return neigh, dists, X, coords, n
     
+def flip_coords(data):
+    """
+    Flip CV coordinates (Y-down, Z-forward) to OpenGL (Y-up, Z-back).
+    Works on point clouds (N, 3) or transformation matrices (4, 4).
+    """
+    # Ensure data is a numpy array
+    data = np.asanyarray(data)
+    
+    # For Point Clouds: [x, y, z] -> [x, -y, -z]
+    # Using slice notation for in-place speed
+    data[:, 1:3] *= -1
+    return data
+    
 def post_filter_density(X, super_index):
     # First fit a plane based on points in a cluster (super_index)
-    
-
+    pass
 
 def visualize_open3d(coords, first_edge, target, labels=None):
     try:
@@ -248,6 +335,10 @@ def write_colored_ply(X, super_index, out_path, feature_names, rng_seed=42):
     PlyData([el], text=False).write(out_path)
     print(f'Wrote colored PLY to: {out_path}')
 
+
+# =============================================================================================
+# Main function
+# =============================================================================================
 if __name__ == "__main__":
     # Parse arguments
     parser = argparse.ArgumentParser(description='Partition a PLY pointcloud with cp_d0_dist')
@@ -257,6 +348,7 @@ if __name__ == "__main__":
     parser.add_argument('--min-comp', type=float, default=10.0, help='min component weight (points)')
     parser.add_argument('--max-it', type=int, default=20, help='cp_d0_dist max iterations')
     parser.add_argument('--keep-largest', type=bool, default=True, help='Keep only the largest connected component of the k-NN graph')
+    parser.add_argument('--trim-longedges', type=bool, default=True, help='Keep only the largest connected component of the k-NN graph')
     parser.add_argument('--verbose', action='store_true', help='Whether to print the point cloud feature values or not')
     args = parser.parse_args()
 
@@ -282,11 +374,12 @@ if __name__ == "__main__":
         print(f"First {m} points and their features (columns = {FEATURE_KEYS}):")
         np.set_printoptions(precision=6, suppress=True)
         for i in range(m):
-            row = ", ".join(f"{FEATURE_KEYS[j]}={X[i, j]:.6g}" for j in range(selected_features.shape[1]))
+            row = ", ".join(f"{FEATURE_KEYS[j]}={selected_features[i, j]:.6g}" for j in range(selected_features.shape[1]))
             print(f"{i}: {row}")
 
     # Filter based on size of Gaussians
-    X = filter_large_gaussians(selected_features, fraction=0.5)
+    selected_features = filter_large_gaussians(selected_features, fraction=0.5)
+    X = remove_nonfinite_coords(selected_features)
     n = X.shape[0]
     D = selected_features.shape[1]
 
@@ -299,7 +392,8 @@ if __name__ == "__main__":
     inds = inds[:, 1:]
     neigh = [list(map(int, inds[i])) for i in range(n)]
 
-    # Optionally keep only the largest connected component
+    if args.trim_longedges:
+        neigh, dists, X, coords = trim_long_edgs(neigh, dists, X, coords, 0.5)
     if args.keep_largest:
         neigh, dists, X, coords, n = keep_largest_connected_component(neigh, dists, X, coords)
 
@@ -329,7 +423,7 @@ if __name__ == "__main__":
         cp_dif_tol=1e-2,
         cp_it_max=args.max_it,
         split_damp_ratio=0.7,
-        verbose=False,
+        verbose=args.verbose,
         max_num_threads=0,
         balance_parallel_split=True,
         compute_Time=True,
@@ -341,6 +435,9 @@ if __name__ == "__main__":
     print('n nodes:', n)
     print('n components:', int(super_index.max()) + 1)
     print("Total python wrapper execution time {:.0f} s\n\n".format(exec_time))
+
+    # Flip
+    X[:, :3] = flip_coords(X[:, :3])
 
     # Optionally visualize after partitioning
     coords = X[:, :3]  # n x 3 float array already in the script
