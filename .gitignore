@@ -6,5 +6,11 @@ Barn/
 Barn_KSR/
 Barn_MVS/
 Barn_MVS_KSR/
+Barn_COLMAP/
+Barn_COLMAP_KSR/
+Barn_GT/
+Barn_GT_KSR/
+Barn_masked/
+Barn_masked_KSR/
 screenshots/
 .DS_Store
