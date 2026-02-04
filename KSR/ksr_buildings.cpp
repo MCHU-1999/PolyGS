@@ -15,7 +15,7 @@ using FT        = typename Kernel::FT;
 using Point_3   = typename Kernel::Point_3;
 using Vector_3  = typename Kernel::Vector_3;
 using Segment_3 = typename Kernel::Segment_3;
- 
+
 using Point_set    = CGAL::Point_set_3<Point_3>;
 using Point_map    = typename Point_set::Point_map;
 using Normal_map   = typename Point_set::Vector_map;
@@ -68,33 +68,37 @@ int main(int argc, char** argv) {
     std::cerr << "Failed to read point set from: " << input_file << std::endl;
     return EXIT_FAILURE;
   }
+
+  std::map<typename KSR::KSP::Face_support, bool> external_nodes;
+  external_nodes[KSR::KSP::Face_support::ZMIN] = true;
  
   auto param = CGAL::parameters::k_neighbors(8)
     .maximum_distance(0.1)          // the maximum distance from a point to a plane
     .maximum_angle(10)              // the maximum angle in degrees between the normal associated with a point and the normal of a plane
-    .minimum_region_size(10)        // the minimum number of points a region must have
+    .minimum_region_size(100)       // the minimum number of points a region must have
     .reorient_bbox(true)            // Setting reorient_bbox to true aligns the x-axis of the bounding box with the direction of the largest variation in horizontal direction of the input data while maintaining the z-axis.
     .regularize_parallelism(true)   // whether parallelism should be regularized or not
     .regularize_coplanarity(true)   // whether coplanarity should be regularized or not
+    .regularize_orthogonality(true) // whether orthogonality should be regularized or not
     .angle_tolerance(10)            // Idk
-    .maximum_offset(0.02);          // maximum distance between two parallel planes to be considered coplanar
+    .maximum_offset(0.05);          // maximum distance between two parallel planes to be considered coplanar
 
   // Algorithm.
   KSR ksr(point_set, param);
-  ksr.detection_and_partition(2, param);
+  ksr.detection_and_partition(3, param);
 
   std::vector<Point_3> vtx;
   std::vector<std::vector<std::size_t> > polylist;
 
-  std::vector<FT> lambdas{0.1, 0.3, 0.5, 0.7};
+  std::vector<FT> lambdas{0.1, 0.3, 0.5};
  
   bool non_empty = false;
  
   for (FT l : lambdas) {
     vtx.clear();
     polylist.clear();
- 
-    ksr.reconstruct_with_ground(l, std::back_inserter(vtx), std::back_inserter(polylist));
+    // ksr.reconstruct_with_ground(l, std::back_inserter(vtx), std::back_inserter(polylist));
+    ksr.reconstruct(l, external_nodes, std::back_inserter(vtx), std::back_inserter(polylist));
  
     if (polylist.size() > 0) {
       non_empty = true;
