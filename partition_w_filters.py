@@ -42,6 +42,54 @@ def build_forward_star(n, neigh_lists):
             idx += 1
     return ptr, targets
 
+def filter_large_gaussians(X, fraction=0.25):
+    """Remove points whose Gaussian size (area) is in the top `fraction`.
+
+    - Uses FEATURE_KEYS to locate 'scale_0','scale_1','scale_2' columns in X.
+    - For each point, picks the two largest scales and computes area = s_max * s_second_max.
+    - Removes the largest `fraction` of points by this area metric and returns the filtered X.
+
+    Parameters
+    - X: numpy array (n x D)
+    - fraction: float in (0,1) percent to remove (default 0.25)
+
+    Returns
+    - X_filtered: numpy array with rows removed for largest-area gaussians
+    """
+    if X.size == 0:
+        return X
+    if not (0.0 <= fraction < 1.0):
+        raise ValueError("fraction must be in [0.0, 1.0)")
+
+    # Find indices of scale columns from FEATURE_KEYS
+    try:
+        i0 = FEATURE_KEYS.index('scale_0')
+        i1 = FEATURE_KEYS.index('scale_1')
+        i2 = FEATURE_KEYS.index('scale_2')
+    except ValueError:
+        print('filter_large_gaussians: FEATURE_KEYS missing scale_* fields; skipping filtering')
+        return X
+
+    # Safely get absolute scales and coerce NaNs to 0
+    scales = np.abs(np.nan_to_num(X[:, [i0, i1, i2]].astype(np.float64), nan=0.0, posinf=0.0, neginf=0.0))
+
+    # For each row pick two largest scales and compute area = s1 * s2
+    # sort along last axis and take two largest
+    sorted_scales = np.sort(scales, axis=1)
+    s2 = sorted_scales[:, 2]
+    s1 = sorted_scales[:, 1]
+    areas = s1 * s2
+
+    # compute threshold to keep lower (1 - fraction) quantile
+    thresh = np.quantile(areas, 1.0 - fraction)
+    keep_mask = areas <= thresh
+
+    kept = int(keep_mask.sum())
+    total = areas.size
+    print(f'filter_large_gaussians: keeping {kept} / {total} points (removed top {fraction:.0%} by area)')
+
+    return X[keep_mask]
+
 # remove rows with non-finite coordinates (first 3 columns)
 def remove_nonfinite_coords(X):
     """Remove rows from X that have non-finite coordinates.
@@ -69,6 +117,56 @@ def remove_nonfinite_coords(X):
     if X_filtered.size == 0:
         raise RuntimeError('No finite points remain after filtering')
     return X_filtered
+
+def trim_long_edgs(neigh, dists, X, coords, fraction=0.25):
+    """
+    Trim the longest {fraction} of edges (by distance).
+
+    This removes the top `fraction` of directed edges by distance, but ensures
+    each node keeps at least one neighbor (its nearest) to avoid isolating
+    vertices completely. Returns (neigh, dists, X, coords) with trimmed lists.
+    """
+    if fraction <= 0.0:
+        return neigh, dists, X, coords
+
+    # Flatten all distances to compute global threshold
+    flat = np.hstack([arr for arr in dists]) if len(dists) > 0 else np.array([], dtype=np.float32)
+    if flat.size == 0:
+        return neigh, dists, X, coords
+
+    thresh = float(np.quantile(flat, 1.0 - fraction))
+
+    n = len(neigh)
+    new_neigh = []
+    new_dists = []
+    removed = 0
+    restored = 0
+    total = 0
+
+    for i in range(n):
+        lst = []
+        ld = []
+        for k, j in enumerate(neigh[i]):
+            total += 1
+            dij = float(dists[i][k])
+            if dij <= thresh:
+                lst.append(int(j))
+                ld.append(dij)
+            else:
+                removed += 1
+
+        # ensure at least one neighbor remains (restore nearest if necessary)
+        if len(lst) == 0 and len(neigh[i]) > 0:
+            kmin = int(np.argmin(dists[i]))
+            lst.append(int(neigh[i][kmin]))
+            ld.append(float(dists[i][kmin]))
+            restored += 1
+
+        new_neigh.append(lst)
+        new_dists.append(np.array(ld, dtype=np.float32))
+
+    print(f'trim_long_edgs: removed {removed} / {total} directed edges (restored {restored} nearest where needed)')
+    return new_neigh, new_dists, X, coords
 
 def keep_largest_connected_component(neigh, dists, X, coords):
     """Keep only the largest connected component from a directed neighbor list.
@@ -148,6 +246,10 @@ def flip_coords(data):
     # Using slice notation for in-place speed
     data[:, 1:3] *= -1
     return data
+    
+def post_filter_density(X, super_index):
+    # First fit a plane based on points in a cluster (super_index)
+    pass
 
 def visualize_open3d(coords, first_edge, target, labels=None):
     try:
@@ -246,6 +348,7 @@ if __name__ == "__main__":
     parser.add_argument('--min-comp', type=float, default=10.0, help='min component weight (points)')
     parser.add_argument('--max-it', type=int, default=20, help='cp_d0_dist max iterations')
     parser.add_argument('--keep-largest', type=bool, default=True, help='Keep only the largest connected component of the k-NN graph')
+    parser.add_argument('--trim-longedges', type=bool, default=True, help='Keep only the largest connected component of the k-NN graph')
     parser.add_argument('--verbose', action='store_true', help='Whether to print the point cloud feature values or not')
     args = parser.parse_args()
 
@@ -274,6 +377,8 @@ if __name__ == "__main__":
             row = ", ".join(f"{FEATURE_KEYS[j]}={selected_features[i, j]:.6g}" for j in range(selected_features.shape[1]))
             print(f"{i}: {row}")
 
+    # Filter based on size of Gaussians
+    selected_features = filter_large_gaussians(selected_features, fraction=0.5)
     X = remove_nonfinite_coords(selected_features)
     n = X.shape[0]
     D = selected_features.shape[1]
@@ -287,6 +392,8 @@ if __name__ == "__main__":
     inds = inds[:, 1:]
     neigh = [list(map(int, inds[i])) for i in range(n)]
 
+    if args.trim_longedges:
+        neigh, dists, X, coords = trim_long_edgs(neigh, dists, X, coords, 0.5)
     if args.keep_largest:
         neigh, dists, X, coords, n = keep_largest_connected_component(neigh, dists, X, coords)
 
