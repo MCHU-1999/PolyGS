@@ -9,8 +9,6 @@ from pycut_pursuit import cp_d0_dist
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 from plyfile import PlyData, PlyElement
-import networkx as nx
-from sklearn.decomposition import PCA
 
 # Features list
 FEATURE_KEYS = [
@@ -206,260 +204,6 @@ def visualize_open3d(coords, first_edge, target, labels=None):
     line_set.colors = o3d.utility.Vector3dVector(np.tile(np.array([0.8, 0.8, 0.8]), (len(lines), 1)))
     o3d.visualization.draw_geometries([pcd, line_set], window_name='Graph', width=1024, height=768)
 
-def compute_superpoint_properties(X, super_index):
-    """Compute centroid and normal for each superpoint using PCA.
-    
-    Returns:
-    - centroids: (n_superpoints, 3) array of superpoint centroids
-    - normals: (n_superpoints, 3) array of superpoint normal vectors
-    - sizes: (n_superpoints,) array of point counts per superpoint
-    """
-    n_superpoints = int(super_index.max()) + 1
-    coords = X[:, :3]
-    
-    centroids = np.zeros((n_superpoints, 3))
-    normals = np.zeros((n_superpoints, 3))
-    sizes = np.zeros(n_superpoints, dtype=int)
-    for sp_id in range(n_superpoints):
-        mask = super_index == sp_id
-        if not mask.any():
-            continue
-            
-        sp_coords = coords[mask]
-        sizes[sp_id] = sp_coords.shape[0]
-        
-        # Compute centroid
-        centroids[sp_id] = sp_coords.mean(axis=0)
-        
-        # Compute normal
-        if X.shape[1] >= 6:  # has nx, ny, nz
-            normal = X[mask, 3:6].mean(axis=0)
-            # Orient normal consistently (e.g., prefer positive Z when possible)
-            if normal[2] < 0:  # if pointing down, flip to point up
-                normal = -normal
-            elif normal[2] == 0:  # if horizontal, prefer positive Y
-                if normal[1] < 0:
-                    normal = -normal
-            elif normal[1] == 0 and normal[0] < 0:  # if along X, prefer positive
-                normal = -normal              
-            norm = np.linalg.norm(normal)
-            if norm > 0:
-                normal /= norm
-            normals[sp_id] = normal
-        else:
-            raise Exception("No nx, ny, or nz in this array.")
-
-    return centroids, normals, sizes
-
-
-def build_superpoint_adjacency_graph(X, super_index, first_edge, target, distance_threshold=None):
-    """Build NetworkX graph of superpoint adjacencies.
-    
-    Returns:
-    - G: NetworkX graph where nodes are superpoint IDs
-    """
-    n_superpoints = int(super_index.max()) + 1
-    n_points = X.shape[0]
-    
-    # Create graph
-    G = nx.Graph()
-    G.add_nodes_from(range(n_superpoints))
-    
-    # Find adjacent superpoints through point-level edges
-    adjacencies = set()
-    
-    for i in range(n_points):
-        sp_i = super_index[i]
-        # Check all neighbors of point i
-        for e in range(first_edge[i], first_edge[i + 1]):
-            j = target[e]
-            if j < n_points:  # valid neighbor
-                sp_j = super_index[j]
-                if sp_i != sp_j:  # different superpoints
-                    adjacencies.add((min(sp_i, sp_j), max(sp_i, sp_j)))
-    
-    # Add edges to graph
-    G.add_edges_from(adjacencies)
-    
-    # Optionally filter by distance threshold (using minimum inter-cluster distance)
-    if distance_threshold is not None:
-        coords = X[:, :3]
-        edges_to_remove = []
-        
-        # For each superpoint pair, find minimum distance between their points
-        # Use existing point-level adjacency for efficiency
-        sp_min_distances = {}
-        
-        for i in range(n_points):
-            sp_i = super_index[i]
-            # Check distances to neighbors in different superpoints
-            for e in range(first_edge[i], first_edge[i + 1]):
-                j = target[e]
-                if j < n_points:
-                    sp_j = super_index[j]
-                    if sp_i != sp_j:
-                        # Distance between these two connected points
-                        dist = np.linalg.norm(coords[i] - coords[j])
-                        pair_key = (min(sp_i, sp_j), max(sp_i, sp_j))
-                        if pair_key not in sp_min_distances:
-                            sp_min_distances[pair_key] = dist
-                        else:
-                            sp_min_distances[pair_key] = min(sp_min_distances[pair_key], dist)
-        
-        # Remove edges where minimum distance exceeds threshold
-        for sp_i, sp_j in G.edges():
-            pair_key = (min(sp_i, sp_j), max(sp_i, sp_j))
-            if pair_key in sp_min_distances:
-                min_dist = sp_min_distances[pair_key]
-                if min_dist > distance_threshold:
-                    edges_to_remove.append((sp_i, sp_j))
-            # If no direct point connection found, remove edge (shouldn't happen normally)
-            else:
-                edges_to_remove.append((sp_i, sp_j))
-        
-        G.remove_edges_from(edges_to_remove)
-        if edges_to_remove:
-            print(f"Removed {len(edges_to_remove)} superpoint connections exceeding distance threshold {distance_threshold}")
-    
-    return G
-    
-def merge_coplanar_superpoints(G, centroids, normals, sizes, angle_threshold_deg=20.0, min_size=5):
-    """Merge connected co-planar superpoints into larger regions.
-    
-    Returns:
-    - merge_tree: NetworkX DiGraph representing the hierarchical merging
-    - final_labels: mapping from original superpoint ID to final merged region ID
-    """
-    angle_threshold_rad = np.deg2rad(angle_threshold_deg)
-    
-    # Create merge tree (directed graph: parent -> children)
-    merge_tree = nx.DiGraph()
-    
-    # Start with all original superpoints as leaf nodes
-    active_nodes = set(G.nodes())
-    next_node_id = len(active_nodes)
-    
-    # Add original nodes to merge tree
-    for node_id in active_nodes:
-        merge_tree.add_node(node_id, 
-                           centroid=centroids[node_id].copy(),
-                           normal=normals[node_id].copy(),
-                           size=sizes[node_id],
-                           is_leaf=True)
-    
-    merged_something = True
-    iteration = 0
-    
-    while merged_something and len(active_nodes) > 1:
-        merged_something = False
-        iteration += 1
-        print(f"Merge iteration {iteration}: {len(active_nodes)} active regions")
-        
-        # Find best merge candidate
-        best_pair = None
-        best_score = float('inf')
-        
-        # Check all adjacent pairs
-        for node_i in active_nodes:
-            for node_j in G.neighbors(node_i):
-                if node_j not in active_nodes or node_j <= node_i:
-                    continue
-                    
-                # Get properties from merge tree
-                props_i = merge_tree.nodes[node_i]
-                props_j = merge_tree.nodes[node_j]
-                
-                normal_i = props_i['normal']
-                normal_j = props_j['normal']
-                size_i = props_i['size']
-                size_j = props_j['size']
-                
-                # Skip if either region is too small
-                if size_i < min_size or size_j < min_size:
-                    continue
-                
-                # Compute angle between normals
-                cos_angle = np.clip(np.abs(np.dot(normal_i, normal_j)), 0, 1)
-                angle = np.arccos(cos_angle)
-                
-                # Check if co-planar
-                if angle <= angle_threshold_rad:
-                    # Score based on angle (lower is better)
-                    score = angle
-                    if score < best_score:
-                        best_score = score
-                        best_pair = (node_i, node_j)
-        
-        # Perform merge if found good candidate
-        if best_pair is not None:
-            node_i, node_j = best_pair
-            merged_something = True
-            
-            # Get properties
-            props_i = merge_tree.nodes[node_i]
-            props_j = merge_tree.nodes[node_j]
-            
-            # Create new merged node
-            merged_size = props_i['size'] + props_j['size']
-            
-            # Weighted average of centroids
-            merged_centroid = (props_i['centroid'] * props_i['size'] + 
-                             props_j['centroid'] * props_j['size']) / merged_size
-            
-            # Average of normals (could be improved)
-            merged_normal = (props_i['normal'] + props_j['normal'])
-            merged_normal = merged_normal / np.linalg.norm(merged_normal)
-            
-            # Add merged node to tree
-            merge_tree.add_node(next_node_id,
-                              centroid=merged_centroid,
-                              normal=merged_normal,
-                              size=merged_size,
-                              is_leaf=False)
-            
-            # Add edges showing this node contains the merged nodes
-            merge_tree.add_edge(next_node_id, node_i)
-            merge_tree.add_edge(next_node_id, node_j)
-            
-            # Update adjacency graph: remove old nodes, add new one
-            # Get all neighbors of both old nodes
-            neighbors_i = set(G.neighbors(node_i))
-            neighbors_j = set(G.neighbors(node_j))
-            all_neighbors = (neighbors_i | neighbors_j) - {node_i, node_j}
-            
-            G.remove_nodes_from([node_i, node_j])
-            G.add_node(next_node_id)
-            G.add_edges_from([(next_node_id, neighbor) for neighbor in all_neighbors])
-            
-            # Update active nodes
-            active_nodes.remove(node_i)
-            active_nodes.remove(node_j)
-            active_nodes.add(next_node_id)
-            
-            next_node_id += 1
-            
-            print(f"  Merged regions {node_i} and {node_j} -> {next_node_id-1} "
-                  f"(angle: {np.rad2deg(best_score):.1f}°, size: {merged_size})")
-    
-    # Create final labels mapping original superpoints to final regions
-    final_labels = {}
-    
-    def assign_labels(node_id, final_region_id):
-        if merge_tree.nodes[node_id]['is_leaf']:
-            final_labels[node_id] = final_region_id
-        else:
-            for child in merge_tree.successors(node_id):
-                assign_labels(child, final_region_id)
-    
-    # Each active node becomes a final region
-    for i, region_id in enumerate(sorted(active_nodes)):
-        assign_labels(region_id, i)
-    
-    print(f"Final result: {len(active_nodes)} merged regions from {len(centroids)} original superpoints")
-    
-    return merge_tree, final_labels
-
-
 def write_colored_ply(X, super_index, out_path, feature_names, rng_seed=42):
     """Write a PLY that preserves all columns in `X` (using `feature_names`) and
     appends `red/green/blue` and `f_dc_0/1/2` fields.
@@ -529,10 +273,6 @@ if __name__ == "__main__":
     parser.add_argument('--max-it', type=int, default=30, help='cp_d0_dist max iterations')
     parser.add_argument('--keep-largest', type=bool, default=True, help='Keep only the largest connected component of the k-NN graph')
     parser.add_argument('--verbose', action='store_true', help='Whether to print the point cloud feature values or not')
-    parser.add_argument('--merge-coplanar', action='store_true', help='Enable hierarchical merging of co-planar superpoints')
-    parser.add_argument('--angle-threshold', type=float, default=5.0, help='Angle threshold (degrees) for co-planarity detection')
-    parser.add_argument('--min-region-size', type=int, default=10, help='Minimum size for regions to be merged')
-    parser.add_argument('--distance-threshold', type=float, default=0.05, help='Max distance between superpoint centroids to be considered adjacent')
     args = parser.parse_args()
 
     # Load PLY file
@@ -593,49 +333,22 @@ if __name__ == "__main__":
     print('n components:', int(super_index.max()) + 1)
     print("Total python wrapper execution time {:.0f} s\n\n".format(exec_time))
 
-    # Hierarchical merging of co-planar superpoints
-    final_labels = super_index.copy()  # Default: no merging
-    if args.merge_coplanar:
-        print("\n=== Hierarchical Merging ===")
-        # Compute superpoint properties
-        print("Computing superpoint properties...")
-        centroids, normals, sizes = compute_superpoint_properties(X, super_index)
-        
-        # Build superpoint adjacency graph
-        print("Building superpoint adjacency graph...")
-        sp_graph = build_superpoint_adjacency_graph(X, super_index, first_edge, target, 
-                                                   distance_threshold=args.distance_threshold)
-        print(f"Superpoint graph: {sp_graph.number_of_nodes()} nodes, {sp_graph.number_of_edges()} edges")
-        
-        # Merge co-planar superpoints
-        print("Merging co-planar superpoints...")
-        merge_tree, sp_to_region = merge_coplanar_superpoints(
-            sp_graph, centroids, normals, sizes,
-            angle_threshold_deg=args.angle_threshold,
-            min_size=args.min_region_size
-        )
-        
-        # Map points to final merged regions
-        final_labels = np.array([sp_to_region[sp_id] for sp_id in super_index])
-        print(f"Merged {int(super_index.max()) + 1} superpoints into {int(final_labels.max()) + 1} regions")
-
-    # Flip coordinates for visualization
+    # Flip
     X[:, :3] = flip_coords(X[:, :3])
 
     # Optionally visualize after partitioning
     coords = X[:, :3]  # n x 3 float array already in the script
-    labels = final_labels.astype(np.int64)
+    labels = super_index.astype(np.int64)
     visualize_open3d(coords, first_edge, target, labels=labels)
 
     ###
-    # Write colored PLY with final merged regions
+    # Write colored PLY with x,y,z and RGB only
     base, ext = os.path.splitext(ply_file)
     out_arg = getattr(args, 'out', None)
     if out_arg:
         # if user passed a directory, place output inside it
         if os.path.isdir(out_arg):
-            suffix = '_merged.ply' if args.merge_coplanar else '_seg.ply'
-            out_path = os.path.join(out_arg, os.path.basename(base) + suffix)
+            out_path = os.path.join(out_arg, os.path.basename(base) + '_seg.ply')
         else:
             # assume user provided a filepath; ensure parent dir exists
             parent = os.path.dirname(out_arg)
@@ -643,7 +356,6 @@ if __name__ == "__main__":
                 os.makedirs(parent, exist_ok=True)
             out_path = out_arg
     else:
-        suffix = '_merged.ply' if args.merge_coplanar else '_seg.ply'
-        out_path = base + suffix
+        out_path = base + '_seg.ply'
 
-    write_colored_ply(X, final_labels, out_path, feature_names=FEATURE_KEYS)
+    write_colored_ply(X, super_index, out_path, feature_names=FEATURE_KEYS)
