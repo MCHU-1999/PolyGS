@@ -2,6 +2,7 @@
 #include <CGAL/Kinetic_surface_reconstruction_3.h>
 #include <CGAL/Point_set_3.h>
 #include <CGAL/Point_set_3/IO.h>
+#include <CGAL/optimal_bounding_box.h>
 #include <CGAL/IO/polygon_soup_io.h>
 #include <CGAL/Polygon_mesh_processing/repair_polygon_soup.h>
 #include <CGAL/Polygon_mesh_processing/orient_polygon_soup.h>
@@ -69,6 +70,28 @@ int main(int argc, char** argv) {
     return EXIT_FAILURE;
   }
 
+  // --- INJECTING GROUND POINTS ---
+  // Find the bounding box and the lowest Z
+  CGAL::Bbox_3 bbox = CGAL::bbox_3(point_set.points().begin(), point_set.points().end());
+  FT ground_z = bbox.zmin();
+  // // Oriented bbox
+  // std::array<Point_3, 8> obb_points;
+  // CGAL::oriented_bounding_box(point_set, obb_points, CGAL::parameters::use_convex_hull(true));
+
+  // Generate a grid of points to represent the ground plane
+  // Use a spacing relative to the bounding box size (e.g., 1% of the width)
+  FT length = std::max(bbox.xmax()-bbox.xmin(), bbox.ymax()-bbox.ymin());
+  FT spacing = length / 100.0;
+
+  for (FT x = bbox.xmin(); x <= bbox.xmax(); x += spacing) {
+    for (FT y = bbox.ymin(); y <= bbox.ymax(); y += spacing) {
+      point_set.insert(Point_3(x, y, ground_z), Vector_3(0, 0, 1));
+    }
+  }
+  fs::path gnd_path = outdir / "pc_w_gnd.ply";
+  CGAL::IO::write_point_set(gnd_path, point_set);
+  // -----------------------------------------
+
   std::map<typename KSR::KSP::Face_support, bool> external_nodes;
   // The bottom is solid (Inside)
   external_nodes[KSR::KSP::Face_support::ZMIN] = true;
@@ -102,8 +125,8 @@ int main(int argc, char** argv) {
   for (FT l : lambdas) {
     vtx.clear();
     polylist.clear();
-    // ksr.reconstruct_with_ground(l, std::back_inserter(vtx), std::back_inserter(polylist));
-    ksr.reconstruct(l, external_nodes, std::back_inserter(vtx), std::back_inserter(polylist));
+    ksr.reconstruct_with_ground(l, std::back_inserter(vtx), std::back_inserter(polylist));
+    // ksr.reconstruct(l, external_nodes, std::back_inserter(vtx), std::back_inserter(polylist));
  
     if (polylist.size() > 0) {
       non_empty = true;
