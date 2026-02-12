@@ -162,18 +162,29 @@ def keep_largest_connected_component(neigh, dists, X, coords):
         print('Graph already fully connected; nothing to do.')
         return neigh, dists, X, coords, n
     
-def flip_coords(data):
+def flip_CV(data, to: str):
     """
-    Flip CV coordinates (Y-down, Z-forward) to OpenGL (Y-up, Z-back).
-    Works on point clouds (N, 3) or transformation matrices (4, 4).
+    Flip CV coordinates (Y-down, Z-forward) to others.
     """
     # Ensure data is a numpy array
     data = np.asanyarray(data)
-    
-    # For Point Clouds: [x, y, z] -> [x, -y, -z]
-    # Using slice notation for in-place speed
-    data[:, 1:3] *= -1
-    return data
+
+    TO = to.upper()
+    if TO == "OPENGL":
+        # OpenGL (X-right, Y-up, Z-back)
+        # For Point Clouds: [x, y, z] -> [x, -y, -z]
+        # Using slice notation for in-place speed
+        data[:, 1:3] *= -1
+        return data
+    elif TO == "CGAL":
+        # Transformation Matrix
+        # [ 1,  0,  0]  <- X_new = X_old
+        # [ 0,  0, -1]  <- Y_new = -Z_old
+        # [ 0, -1,  0]  <- Z_new = -Y_old
+        T = np.array([[1, 0, 0], 
+                      [0, 0, -1], 
+                      [0, -1, 0]])
+        return data @ T
 
 def visualize_open3d(coords, first_edge, target, labels=None):
     try:
@@ -334,7 +345,7 @@ if __name__ == "__main__":
     print("Total python wrapper execution time {:.0f} s\n\n".format(exec_time))
 
     # Flip
-    X[:, :3] = flip_coords(X[:, :3])
+    X[:, :3] = flip_CV(X[:, :3], "CGAL")
 
     # Optionally visualize after partitioning
     coords = X[:, :3]  # n x 3 float array already in the script

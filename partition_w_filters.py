@@ -21,13 +21,39 @@ FEATURE_KEYS = [
 ]
 # Weights
 WEIGHTS = np.array([
-    4, 4, 4,
-    20, 20, 20,
+    10, 10, 10,
+    30, 30, 30,
     1, 1, 1,
     0, 0, 0,
     0, 0, 0, 0,
     0
 ], dtype=np.float32)
+
+def load_ply(ply_file, feature_keys, verbose: bool):
+    # Load PLY file
+    pc = PlyData.read(ply_file)
+    elements = [e.name for e in pc.elements]
+    if 'vertex' not in elements:
+        raise RuntimeError(f"PLY has no 'vertex' element. Found elements: {elements}")
+    data = pc['vertex'].data
+    names = data.dtype.names
+    for f in feature_keys:
+        if f not in names:
+            raise ValueError("The points in PLY file do not contain the necessary features")
+    selected_features = np.vstack([data[k] for k in feature_keys]).T.astype(np.float32)
+    # Success
+    print(f'Loaded {selected_features.shape[0]} points, using features: {feature_keys}')
+
+    if verbose:
+        # Print first 20 points and their feature values and exit
+        m = min(20, selected_features.shape[0])
+        print(f"First {m} points and their features (columns = {feature_keys}):")
+        np.set_printoptions(precision=6, suppress=True)
+        for i in range(m):
+            row = ", ".join(f"{feature_keys[j]}={selected_features[i, j]:.6g}" for j in range(selected_features.shape[1]))
+            print(f"{i}: {row}")
+    
+    return selected_features
 
 def build_forward_star(n, neigh_lists):
     # neigh_lists: list of neighbor lists for each node (directed)
@@ -102,13 +128,12 @@ def remove_nonfinite_coords(X):
 
     Returns
     - X_filtered: filtered numpy array
-    - finite_mask: boolean mask of kept rows
     """
 
     coords = X[:, :3]
     finite_mask = np.isfinite(coords).all(axis=1)
     if finite_mask.all():
-        return X, finite_mask
+        return X
 
     n_bad = int((~finite_mask).sum())
     print(f'Removing {n_bad} points with non-finite coordinates')
@@ -352,34 +377,11 @@ if __name__ == "__main__":
     parser.add_argument('--verbose', action='store_true', help='Whether to print the point cloud feature values or not')
     args = parser.parse_args()
 
-
     # Load PLY file
     ply_file = args.ply
-    pc = PlyData.read(ply_file)
-    elements = [e.name for e in pc.elements]
-    if 'vertex' not in elements:
-        raise RuntimeError(f"PLY has no 'vertex' element. Found elements: {elements}")
-    data = pc['vertex'].data
-    names = data.dtype.names
-    for f in FEATURE_KEYS:
-        if f not in names:
-            raise ValueError("The points in PLY file do not contain the necessary features")
-    selected_features = np.vstack([data[k] for k in FEATURE_KEYS]).T.astype(np.float32)
-    # Success
-    print(f'Loaded {selected_features.shape[0]} points, using features: {FEATURE_KEYS}')
-
-    if args.verbose:
-        # Print first 20 points and their feature values and exit
-        m = min(20, selected_features.shape[0])
-        print(f"First {m} points and their features (columns = {FEATURE_KEYS}):")
-        np.set_printoptions(precision=6, suppress=True)
-        for i in range(m):
-            row = ", ".join(f"{FEATURE_KEYS[j]}={selected_features[i, j]:.6g}" for j in range(selected_features.shape[1]))
-            print(f"{i}: {row}")
-
-    # Filter based on size of Gaussians
-    selected_features = filter_large_gaussians(selected_features, fraction=0.5)
+    selected_features = load_ply(ply_file, FEATURE_KEYS, args.verbose)
     X = remove_nonfinite_coords(selected_features)
+    print(type(X))
     n = X.shape[0]
     D = selected_features.shape[1]
 
@@ -393,7 +395,7 @@ if __name__ == "__main__":
     neigh = [list(map(int, inds[i])) for i in range(n)]
 
     if args.trim_longedges:
-        neigh, dists, X, coords = trim_long_edgs(neigh, dists, X, coords, 0.5)
+        neigh, dists, X, coords = trim_long_edgs(neigh, dists, X, coords, 0.1)
     if args.keep_largest:
         neigh, dists, X, coords, n = keep_largest_connected_component(neigh, dists, X, coords)
 
