@@ -24,7 +24,7 @@ FEATURE_KEYS = [
 # Weights
 WEIGHTS = np.array([
     10, 10, 10,
-    30, 30, 30,
+    20, 20, 20,
     1, 1, 1,
     0, 0, 0,
     0, 0, 0, 0,
