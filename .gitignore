@@ -1,4 +1,5 @@
 .vscode/
+build/
 example_pointcloud/
 data/
 screenshots/
