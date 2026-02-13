@@ -4,7 +4,7 @@
 #include <CGAL/IO/polygon_soup_io.h>
 #include <CGAL/Polygon_mesh_processing/repair_polygon_soup.h>
 #include <CGAL/Polygon_mesh_processing/orient_polygon_soup.h>
-#include <include/Kinetic_surface_reconstruction_3.h>
+#include "include/Kinetic_surface_reconstruction_3.h"
 
 #include <filesystem>
 #include <iostream>

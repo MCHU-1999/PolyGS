@@ -32,18 +32,15 @@ endif()
 # Export compile commands for editor tooling
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# Add subdirectories
+# Add subdirectories (this will create the executables)
 message(STATUS "Adding subdirectory: GS2Plane")
 add_subdirectory(GS2Plane)
 
 message(STATUS "Adding subdirectory: KSR")
 add_subdirectory(KSR)
 
-# Create a custom target that builds all subproject executables
-# Note: Individual executable names are now dynamic based on .cpp filenames
-add_custom_target(PolyGS ALL
-    COMMENT "Building all PolyGS executables (dynamic based on .cpp files)"
-)
+# The default "all" target will now build everything automatically
+# No need for a custom PolyGS target - just use the default behavior
 
 # Print build summary
 message(STATUS "")
@@ -53,5 +50,5 @@ message(STATUS "  C++ standard: ${CMAKE_CXX_STANDARD}")
 message(STATUS "  CGAL: ${CGAL_FOUND}")
 message(STATUS "  Eigen3: ${Eigen3_FOUND}")
 message(STATUS "  Auto-building all .cpp files as executables")
-message(STATUS "  Output: build/GS2Plane/ and build/KSR/")
+message(STATUS "  Use 'make' or 'cmake --build .' to build all")
 message(STATUS "")
