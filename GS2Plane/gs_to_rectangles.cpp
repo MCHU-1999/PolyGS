@@ -1,5 +1,8 @@
-#include <CGAL/Simple_cartesian.h>
-#include <CGAL/Surface_mesh.h>
+// #include <CGAL/Simple_cartesian.h>
+// #include <CGAL/Surface_mesh.h>
+// #include "custom_ds.h"
+#include "custom_region_growing.h"
+// #include "custom_region_growing_2.h"
 #include <CGAL/IO/PLY.h>
 #include <CGAL/IO/read_ply_points.h>
 #include <CGAL/boost/graph/IO/PLY.h>
@@ -12,16 +15,7 @@
 #include <tuple>
 #include <algorithm>
 #include <cmath>
-
-typedef CGAL::Simple_cartesian<double> Kernel;
-typedef Kernel::Point_3 Point_3;
-typedef Kernel::Vector_3 Vector_3;
-typedef CGAL::Surface_mesh<Point_3> Mesh;
-
-// Define a tuple to hold all Gaussian Splat properties
-typedef std::tuple<Point_3, Vector_3, double, double, double, 
-                   double, double, double, 
-                   double, double, double, double> GaussianTuple;
+#include <random>
 
 // Property maps for accessing tuple elements
 typedef CGAL::Nth_of_tuple_property_map<0, GaussianTuple> Point_map;
@@ -36,21 +30,6 @@ typedef CGAL::Nth_of_tuple_property_map<8, GaussianTuple> Rot_0_map;
 typedef CGAL::Nth_of_tuple_property_map<9, GaussianTuple> Rot_1_map;
 typedef CGAL::Nth_of_tuple_property_map<10, GaussianTuple> Rot_2_map;
 typedef CGAL::Nth_of_tuple_property_map<11, GaussianTuple> Rot_3_map;
-
-struct GaussianSplat {
-  double x, y, z;
-  double nx, ny, nz;
-  double f_dc_0, f_dc_1, f_dc_2;
-  double scale_0, scale_1, scale_2;
-  double rot_0, rot_1, rot_2, rot_3;
-};
-
-struct Rectangle3D {
-  Point_3 center;
-  Vector_3 axis1, axis2;
-  double width, height;
-  double r, g, b;
-};
 
 // Function to transform from OpenCV to CGAL coordinate system
 // -90 degree rotation around X-axis: Y -> -Z, Z -> Y
@@ -157,13 +136,14 @@ Rectangle3D gs_to_rect(const GaussianSplat& gs) {
   Rectangle3D rect;
   
   rect.center = Point_3(gs.x, gs.y, gs.z);
+  rect.normal = Vector_3(gs.nx, gs.ny, gs.nz);
   
   // Get scales and find two largest axes
   std::array<double, 3> scales = {std::exp(gs.scale_0), std::exp(gs.scale_1), std::exp(gs.scale_2)};
   std::array<int, 3> indices = {0, 1, 2};
   
   std::sort(indices.begin(), indices.end(), 
-        [&scales](int a, int b) { return scales[a] > scales[b]; });
+        [&scales](int a, int b) { return abs(scales[a]) > abs(scales[b]); });
   
   // Normalize quaternion and convert to rotation matrix
   double w = gs.rot_0, x = gs.rot_1, y = gs.rot_2, z = gs.rot_3;
@@ -178,8 +158,9 @@ Rectangle3D gs_to_rect(const GaussianSplat& gs) {
   
   rect.axis1 = axis1;
   rect.axis2 = axis2;
-  rect.width = 2.0 * scales[indices[0]];
-  rect.height = 2.0 * scales[indices[1]];
+  rect.width = 2.0 * abs(scales[indices[0]]);
+  rect.height = 2.0 * abs(scales[indices[1]]);
+  rect.pseudo_radius = (rect.width + rect.height) / 4;
   
   // Convert color
   rect.r = std::max(0.0, std::min(1.0, (gs.f_dc_0 + 0.5)));
@@ -255,6 +236,109 @@ void write_ply(const std::vector<Rectangle3D>& rectangles, const std::string& fi
             << mesh.number_of_vertices() << " vertices) to " << filename << "\n";
 }
 
+std::array<double, 3> hue_to_rgb(double hue_fraction, double saturation = 0.8, double brightness = 0.9) {
+  // Convert hue fraction (0-1) to degrees (0-360)
+  double hue_deg = hue_fraction * 360.0;
+  
+  // Simple HSV to RGB conversion
+  double chroma = brightness * saturation;
+  double hue_prime = hue_deg / 60.0;
+  double x = chroma * (1.0 - std::abs(std::fmod(hue_prime, 2.0) - 1.0));
+  double m = brightness - chroma;
+  
+  double r, g, b;
+  if (hue_prime < 1) {
+    r = chroma; g = x; b = 0;
+  } else if (hue_prime < 2) {
+    r = x; g = chroma; b = 0;
+  } else if (hue_prime < 3) {
+    r = 0; g = chroma; b = x;
+  } else if (hue_prime < 4) {
+    r = 0; g = x; b = chroma;
+  } else if (hue_prime < 5) {
+    r = x; g = 0; b = chroma;
+  } else {
+    r = chroma; g = 0; b = x;
+  }
+  
+  return {r + m, g + m, b + m};
+}
+
+// Function to create cluster-based colors with better distribution
+std::vector<std::array<double, 3>> create_cluster_colors(size_t num_clusters) {
+  std::vector<std::array<double, 3>> colors(num_clusters);
+  
+  // Use golden ratio for better color distribution
+  const double golden_ratio = 0.618033988749895;
+  
+  for (size_t i = 0; i < num_clusters; ++i) {
+    // Distribute hues evenly using golden ratio
+    double hue_fraction = std::fmod(i * golden_ratio, 1.0);
+    
+    // Vary saturation and brightness slightly to add more distinction
+    double saturation = 0.7 + 0.3 * std::sin(i * 0.5);  // 0.7 to 1.0
+    double brightness = 0.8 + 0.2 * std::cos(i * 0.7);  // 0.8 to 1.0
+    
+    colors[i] = hue_to_rgb(hue_fraction, saturation, brightness);
+  }
+  
+  return colors;
+}
+
+// Function to apply cluster colors to rectangles
+void color_rectangles_by_cluster(std::vector<Rectangle3D>& rectangles,
+                                const std::vector<std::vector<std::size_t>>& clusters) {
+  
+  // Generate unique colors for each cluster
+  auto cluster_colors = create_cluster_colors(clusters.size());
+  
+  // Default gray color for unclustered rectangles
+  const std::array<double, 3> gray_color = {0.5, 0.5, 0.5};
+  
+  // First, color ALL rectangles gray (unclustered)
+  for (auto& rect : rectangles) {
+    rect.r = gray_color[0];
+    rect.g = gray_color[1];
+    rect.b = gray_color[2];
+  }
+  
+  std::cout << "Coloring " << clusters.size() << " clusters..." << std::endl;
+  
+  // Then, apply colors to each cluster (overriding gray for clustered rectangles)
+  for (size_t cluster_idx = 0; cluster_idx < clusters.size(); ++cluster_idx) {
+    const auto& cluster = clusters[cluster_idx];
+    const auto& color = cluster_colors[cluster_idx];
+    
+    std::cout << "Cluster " << cluster_idx << ": " << cluster.size() 
+              << " rectangles, RGB(" 
+              << (int)(color[0]*255) << ", " 
+              << (int)(color[1]*255) << ", " 
+              << (int)(color[2]*255) << ")" << std::endl;
+    
+    // Color all rectangles in this cluster
+    for (auto rect_idx : cluster) {
+      if (rect_idx < rectangles.size()) {
+        rectangles[rect_idx].r = color[0];
+        rectangles[rect_idx].g = color[1];
+        rectangles[rect_idx].b = color[2];
+      }
+    }
+  }
+  
+  // Count how many rectangles are unclustered
+  std::vector<bool> is_clustered(rectangles.size(), false);
+  for (const auto& cluster : clusters) {
+    for (auto rect_idx : cluster) {
+      if (rect_idx < rectangles.size()) {
+        is_clustered[rect_idx] = true;
+      }
+    }
+  }
+  
+  size_t unclustered_count = std::count(is_clustered.begin(), is_clustered.end(), false);
+  std::cout << "Unclustered rectangles: " << unclustered_count << " (colored gray)" << std::endl;
+}
+
 int main(int argc, char* argv[]) {
   if (argc != 3) {
     std::cerr << "Usage: " << argv[0] << " <input.ply> <output.ply>\n";
@@ -272,10 +356,34 @@ int main(int argc, char* argv[]) {
     for (const auto& gs : gaussians) {
       rectangles.push_back(gs_to_rect(gs));
     }
+
+    // // Take every 10th rectangle to get a representative sample
+    // std::vector<Rectangle3D> test_rectangles;
+    // for (size_t i = 0; i < rectangles.size(); i += 10) {
+    //   test_rectangles.push_back(rectangles[i]);
+    // }
+    // std::cout << "Testing with " << test_rectangles.size() << " rectangles (sampled from " << rectangles.size() << ")" << std::endl;
+
+    // Detect planar regions
+    std::cout << "Detecting planar regions...\n";
+    auto detected_regions = detect_planar_regions(
+      rectangles,
+      0.20,
+      0.95,
+      0.05,
+      100
+    );
+    if (detected_regions.empty()) {
+      std::cerr << "No clusters found" << std::endl;
+      return EXIT_FAILURE;
+    }
+
+    // Color rectangles based on their cluster membership
+    color_rectangles_by_cluster(rectangles, detected_regions);
     
-    std::cout << "Writing rectangles to " << argv[2] << "...\n";
+    // Write colored output
+    std::cout << "Writing colored rectangles to " << argv[2] << "...\n";
     write_ply(rectangles, argv[2]);
-    
     std::cout << "Conversion completed!\n";
     
   } catch (const std::exception& e) {
