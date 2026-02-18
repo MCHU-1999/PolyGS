@@ -23,8 +23,8 @@ FEATURE_KEYS = [
 ]
 # Weights
 WEIGHTS = np.array([
-    10, 10, 10,
     20, 20, 20,
+    30, 30, 30,
     1, 1, 1,
     0, 0, 0,
     0, 0, 0, 0,
@@ -169,38 +169,41 @@ def flip_coords(data):
     Works on point clouds (N, 3) or transformation matrices (4, 4).
     """
     # Ensure data is a numpy array
-    data = np.asanyarray(data)
-    
+    datacopy = np.copy(np.asanyarray(data))
     # For Point Clouds: [x, y, z] -> [x, -y, -z]
     # Using slice notation for in-place speed
-    data[:, 1:3] *= -1
-    return data
+    datacopy[:, 1:3] *= -1
+    return datacopy
 
 def visualize_open3d(coords, first_edge, target, labels=None):
     try:
         import open3d as o3d
     except Exception as e:
         print('Open3D not available:', e); return
+    
+    # Flip coordinates for visualization
+    coords_flipped = flip_coords(coords)
+
     pcd = o3d.geometry.PointCloud()
-    pcd.points = o3d.utility.Vector3dVector(coords)
+    pcd.points = o3d.utility.Vector3dVector(coords_flipped)
     if labels is not None:
         nlabels = int(labels.max()) + 1
         rng = np.random.RandomState(42)
         palette = (rng.randint(0, 256, size=(nlabels, 3)) / 255.0)
         pcd.colors = o3d.utility.Vector3dVector(palette[labels])
     else:
-        pcd.colors = o3d.utility.Vector3dVector(np.tile(np.array([0.7, 0.7, 0.7]), (coords.shape[0], 1)))
+        pcd.colors = o3d.utility.Vector3dVector(np.tile(np.array([0.7, 0.7, 0.7]), (coords_flipped.shape[0], 1)))
 
     lines = []
-    for i in range(coords.shape[0]):
+    for i in range(coords_flipped.shape[0]):
         for e in range(first_edge[i], first_edge[i + 1]):
             j = int(target[e])
-            if 0 <= j < coords.shape[0]:
+            if 0 <= j < coords_flipped.shape[0]:
                 lines.append([i, j])
     if len(lines) == 0:
         print('No edges to display.')
         o3d.visualization.draw_geometries([pcd]); return
-    line_set = o3d.geometry.LineSet(points=o3d.utility.Vector3dVector(coords),
+    line_set = o3d.geometry.LineSet(points=o3d.utility.Vector3dVector(coords_flipped),
                                     lines=o3d.utility.Vector2iVector(np.array(lines, dtype=np.int32)))
     line_set.colors = o3d.utility.Vector3dVector(np.tile(np.array([0.8, 0.8, 0.8]), (len(lines), 1)))
     o3d.visualization.draw_geometries([pcd, line_set], window_name='Graph', width=1024, height=768)
@@ -617,9 +620,6 @@ if __name__ == "__main__":
         # Map points to final merged regions
         final_labels = np.array([sp_to_region[sp_id] for sp_id in super_index])
         print(f"Merged {int(super_index.max()) + 1} superpoints into {int(final_labels.max()) + 1} regions")
-
-    # Flip coordinates for visualization
-    X[:, :3] = flip_coords(X[:, :3])
 
     # Optionally visualize after partitioning
     coords = X[:, :3]  # n x 3 float array already in the script
