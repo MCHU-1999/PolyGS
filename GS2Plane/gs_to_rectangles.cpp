@@ -158,22 +158,29 @@ Rectangle3D gs_to_rect(const GaussianSplat& gs) {
   
   rect.axis1 = axis1;
   rect.axis2 = axis2;
-  rect.width = 2.0 * abs(scales[indices[0]]);
-  rect.height = 2.0 * abs(scales[indices[1]]);
+  rect.height = 2.0 * abs(scales[indices[0]]);
+  rect.width = 2.0 * abs(scales[indices[1]]);
   rect.pseudo_radius = (rect.width + rect.height) / 4;
+
+  Vector_3 half_height_vec = (rect.height / 2.0) * rect.axis1;
+  Vector_3 half_width_vec = (rect.width / 2.0) * rect.axis2;
+  rect.a1_v1 = rect.center + half_height_vec;
+  rect.a1_v2 = rect.center - half_height_vec;
+  rect.a2_v1 = rect.center + half_width_vec;
+  rect.a2_v2 = rect.center - half_width_vec;
   
   // Convert color
-  rect.r = std::max(0.0, std::min(1.0, (gs.f_dc_0 + 0.5)));
-  rect.g = std::max(0.0, std::min(1.0, (gs.f_dc_1 + 0.5)));
-  rect.b = std::max(0.0, std::min(1.0, (gs.f_dc_2 + 0.5)));
+  rect.red = std::max(0.0, std::min(1.0, (gs.f_dc_0 + 0.5)));
+  rect.green = std::max(0.0, std::min(1.0, (gs.f_dc_1 + 0.5)));
+  rect.blue = std::max(0.0, std::min(1.0, (gs.f_dc_2 + 0.5)));
   
   return rect;
 }
 
 // Function to add rectangle to mesh with colors
 void add_rectangle_to_mesh(Mesh& mesh, const Rectangle3D& rect) {
-  Vector_3 half_width_vec = (rect.width / 2.0) * rect.axis1;
-  Vector_3 half_height_vec = (rect.height / 2.0) * rect.axis2;
+  Vector_3 half_height_vec = (rect.height / 2.0) * rect.axis1;
+  Vector_3 half_width_vec = (rect.width / 2.0) * rect.axis2;
   
   Point_3 p1 = rect.center + half_width_vec + half_height_vec;
   Point_3 p2 = rect.center - half_width_vec + half_height_vec;
@@ -202,9 +209,9 @@ void add_rectangle_to_mesh(Mesh& mesh, const Rectangle3D& rect) {
   
   // Convert to CGAL Color (RGB values 0-255)
   CGAL::IO::Color color(
-    (unsigned char)(rect.r * 255),
-    (unsigned char)(rect.g * 255), 
-    (unsigned char)(rect.b * 255)
+    (unsigned char)(rect.red * 255),
+    (unsigned char)(rect.green * 255), 
+    (unsigned char)(rect.blue * 255)
   );
   
   // Assign color to both faces of this rectangle
@@ -297,9 +304,9 @@ void color_rectangles_by_cluster(std::vector<Rectangle3D>& rectangles,
   
   // First, color ALL rectangles gray (unclustered)
   for (auto& rect : rectangles) {
-    rect.r = gray_color[0];
-    rect.g = gray_color[1];
-    rect.b = gray_color[2];
+    rect.red = gray_color[0];
+    rect.green = gray_color[1];
+    rect.blue = gray_color[2];
   }
   
   std::cout << "Coloring " << clusters.size() << " clusters..." << std::endl;
@@ -318,9 +325,9 @@ void color_rectangles_by_cluster(std::vector<Rectangle3D>& rectangles,
     // Color all rectangles in this cluster
     for (auto rect_idx : cluster) {
       if (rect_idx < rectangles.size()) {
-        rectangles[rect_idx].r = color[0];
-        rectangles[rect_idx].g = color[1];
-        rectangles[rect_idx].b = color[2];
+        rectangles[rect_idx].red = color[0];
+        rectangles[rect_idx].green = color[1];
+        rectangles[rect_idx].blue = color[2];
       }
     }
   }
@@ -368,9 +375,10 @@ int main(int argc, char* argv[]) {
     std::cout << "Detecting planar regions...\n";
     auto detected_regions = detect_planar_regions(
       rectangles,
-      0.20,
-      0.95,
-      0.05,
+      0.15,
+      0.90,
+      0.02,
+      // 0.80,
       100
     );
     if (detected_regions.empty()) {

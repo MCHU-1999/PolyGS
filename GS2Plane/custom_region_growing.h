@@ -129,13 +129,17 @@ public:
       return false;
     }
     
-    if (region.size() <= 3) {
+    if (region.size() < 3) {
       m_current_plane = Plane_3(m_rectangles[region[0]].center, m_rectangles[region[0]].normal);
     } else {
       std::vector<Point_3> points;
       points.reserve(region.size());
       for (const auto& idx : region) {
         points.push_back(m_rectangles[idx].center);
+        points.push_back(m_rectangles[idx].a1_v1);
+        points.push_back(m_rectangles[idx].a1_v2);
+        points.push_back(m_rectangles[idx].a2_v1);
+        points.push_back(m_rectangles[idx].a2_v2);
       }
       
       Plane_3 fitted_plane;
@@ -145,7 +149,7 @@ public:
         CGAL::Dimension_tag<0>() 
       );
       
-      if (quality >= 0.0) {
+      if (quality >= 0.7) {
         m_current_plane = fitted_plane;
       } else {
         m_current_plane = Plane_3(m_rectangles[region[0]].center, m_rectangles[region[0]].normal);
