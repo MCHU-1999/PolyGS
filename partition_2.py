@@ -23,7 +23,7 @@ FEATURE_KEYS = [
 ]
 # Weights
 WEIGHTS = np.array([
-    20, 20, 20,
+    0, 0, 0,
     30, 30, 30,
     1, 1, 1,
     0, 0, 0,
@@ -526,7 +526,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Partition a PLY pointcloud with cp_d0_dist')
     parser.add_argument('--ply', required=True, help='Path to input PLY file')
     parser.add_argument('--out', help='Path to output PLY file')
-    parser.add_argument('--k', type=int, default=8, help='k for k-NN graph')
+    parser.add_argument('--k', type=int, default=4, help='k for k-NN graph')
     parser.add_argument('--min-comp', type=float, default=10.0, help='min component weight (points)')
     parser.add_argument('--max-it', type=int, default=30, help='cp_d0_dist max iterations')
     parser.add_argument('--keep-largest', type=bool, default=True, help='Keep only the largest connected component of the k-NN graph')
