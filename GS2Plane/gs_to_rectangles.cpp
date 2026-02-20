@@ -2,7 +2,7 @@
 // #include <CGAL/Surface_mesh.h>
 // #include "custom_ds.h"
 #include "custom_region_growing.h"
-// #include "custom_region_growing_2.h"
+// #include "custom_region_growing_color.h"
 #include <CGAL/IO/PLY.h>
 #include <CGAL/IO/read_ply_points.h>
 #include <CGAL/boost/graph/IO/PLY.h>
@@ -160,14 +160,14 @@ Rectangle3D gs_to_rect(const GaussianSplat& gs) {
   rect.axis2 = axis2;
   rect.height = 2.0 * abs(scales[indices[0]]);
   rect.width = 2.0 * abs(scales[indices[1]]);
-  rect.pseudo_radius = (rect.width + rect.height) / 4;
+  rect.pseudo_radius = CGAL::sqrt(std::pow(rect.width, 2) + std::pow(rect.height, 2));
 
   Vector_3 half_height_vec = (rect.height / 2.0) * rect.axis1;
   Vector_3 half_width_vec = (rect.width / 2.0) * rect.axis2;
-  rect.a1_v1 = rect.center + half_height_vec;
-  rect.a1_v2 = rect.center - half_height_vec;
-  rect.a2_v1 = rect.center + half_width_vec;
-  rect.a2_v2 = rect.center - half_width_vec;
+  rect.v1 = rect.center + half_width_vec + half_height_vec;
+  rect.v2 = rect.center - half_width_vec + half_height_vec;
+  rect.v3 = rect.center - half_width_vec - half_height_vec;
+  rect.v4 = rect.center + half_width_vec - half_height_vec;
   
   // Convert color
   rect.red = std::max(0.0, std::min(1.0, (gs.f_dc_0 + 0.5)));
@@ -179,24 +179,19 @@ Rectangle3D gs_to_rect(const GaussianSplat& gs) {
 
 // Function to add rectangle to mesh with colors
 void add_rectangle_to_mesh(Mesh& mesh, const Rectangle3D& rect) {
-  Vector_3 half_height_vec = (rect.height / 2.0) * rect.axis1;
-  Vector_3 half_width_vec = (rect.width / 2.0) * rect.axis2;
-  
-  Point_3 p1 = rect.center + half_width_vec + half_height_vec;
-  Point_3 p2 = rect.center - half_width_vec + half_height_vec;
-  Point_3 p3 = rect.center - half_width_vec - half_height_vec;
-  Point_3 p4 = rect.center + half_width_vec - half_height_vec;
-
-  transform_opencv_to_cgal(p1);
-  transform_opencv_to_cgal(p2);
-  transform_opencv_to_cgal(p3);
-  transform_opencv_to_cgal(p4);
+  Point_3 p1(rect.v1);
+  Point_3 p2(rect.v2);
+  Point_3 p3(rect.v3);
+  Point_3 p4(rect.v4);
+  // transform_opencv_to_cgal(p1);
+  // transform_opencv_to_cgal(p2);
+  // transform_opencv_to_cgal(p3);
+  // transform_opencv_to_cgal(p4);
   
   auto v1 = mesh.add_vertex(p1);
   auto v2 = mesh.add_vertex(p2);
   auto v3 = mesh.add_vertex(p3);
   auto v4 = mesh.add_vertex(p4);
-  
   auto f1 = mesh.add_face(v1, v2, v3);
   auto f2 = mesh.add_face(v1, v3, v4);
   
@@ -375,9 +370,9 @@ int main(int argc, char* argv[]) {
     std::cout << "Detecting planar regions...\n";
     auto detected_regions = detect_planar_regions(
       rectangles,
-      0.15,
+      0.20,
       0.90,
-      0.02,
+      0.05,
       // 0.80,
       100
     );

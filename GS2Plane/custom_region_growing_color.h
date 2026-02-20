@@ -8,8 +8,6 @@
 #include <CGAL/Kd_tree.h>
 #include <CGAL/Fuzzy_sphere.h>
 #include <CGAL/Kernel_traits.h>
-#include <CGAL/Polygon_2.h>
-#include <CGAL/Boolean_set_operations_2.h>
 #include <vector>
 #include <memory>
 #include <numeric>
@@ -35,8 +33,6 @@ struct Center_property_map {
 
 // 2. Setup Kd-Tree Traits
 using Kernel = CGAL::Kernel_traits<Point_3>::Kernel;
-using Point_2 = CGAL::Point_2<Kernel>;
-using Polygon_2 = CGAL::Polygon_2<Kernel>;
 using Traits_base = CGAL::Search_traits_3<Kernel>;
 using Tree_Traits = CGAL::Search_traits_adapter<std::size_t, Center_property_map, Traits_base>;
 using Kd_Tree = CGAL::Kd_tree<Tree_Traits>;
@@ -48,13 +44,13 @@ public:
 private:
   const std::vector<Rectangle3D>& m_rectangles;
   double m_radius;
-  double m_offset;
+  double m_radius_offset;
   std::shared_ptr<Kd_Tree> m_tree;
   Center_property_map m_prop_map;
   
 public:
   Rectangle_neighbor_query(const std::vector<Rectangle3D>& rectangles, double radius = 0.5)
-    : m_rectangles(rectangles), m_radius(radius), m_offset(0.05), m_prop_map(&rectangles) {
+    : m_rectangles(rectangles), m_radius(radius), m_radius_offset(0.0), m_prop_map(&rectangles) {
     
     std::vector<std::size_t> indices;
     indices.reserve(rectangles.size());
@@ -79,16 +75,9 @@ public:
   void operator()(const Item& query_item, std::vector<Item>& neighbors) const {
     neighbors.clear();
     const auto& query_rect = m_rectangles[query_item];
-    // Pre-calculation
-    const Point_3& q_center = query_rect.center;
-    const Vector_3& q_axis1 = query_rect.axis1;
-    const Vector_3& q_axis2 = query_rect.axis2;
-    const Vector_3& q_normal = query_rect.normal;
-    double limit_u = (query_rect.height / 2.0) + m_offset;
-    double limit_v = (query_rect.width / 2.0) + m_offset;
     
     double search_radius = m_radius + query_rect.pseudo_radius;
-    Fuzzy_sphere sphere(query_rect.center, search_radius, 0.0, Tree_Traits(m_prop_map));
+    Fuzzy_sphere sphere(query_rect.center, search_radius, m_radius_offset, Tree_Traits(m_prop_map));
     
     std::vector<Item> candidates;
     m_tree->search(std::back_inserter(candidates), sphere);
@@ -100,26 +89,12 @@ public:
       double normal_dot = std::abs(query_rect.normal * candidate.normal);
       if (normal_dot < 0.5) continue;
       
-      auto get_uv = [&](const Point_3& p) {
-        Vector_3 vec = p - q_center;
-        return std::make_pair(vec * q_axis1, vec * q_axis2);
-      };
-
-      auto uv1 = get_uv(candidate.v1);
-      auto uv2 = get_uv(candidate.v2);
-      auto uv3 = get_uv(candidate.v3);
-      auto uv4 = get_uv(candidate.v4);
-
-      // Simplified AABB bounds calculation and examination
-      double min_u = std::min({uv1.first, uv2.first, uv3.first, uv4.first});
-      double max_u = std::max({uv1.first, uv2.first, uv3.first, uv4.first});
-      if (max_u < -limit_u || min_u > limit_u) continue;
-
-      double min_v = std::min({uv1.second, uv2.second, uv3.second, uv4.second});
-      double max_v = std::max({uv1.second, uv2.second, uv3.second, uv4.second});
-      if (max_v < -limit_v || min_v > limit_v) continue;
-
-      neighbors.push_back(candidate_idx);
+      double max_possible_radius = m_radius + query_rect.pseudo_radius + candidate.pseudo_radius;
+      double distance = CGAL::sqrt(CGAL::squared_distance(query_rect.center, candidate.center));
+      
+      if (distance <= max_possible_radius) {
+        neighbors.push_back(candidate_idx);
+      }
     }
   }
 };
@@ -133,16 +108,21 @@ private:
   const std::vector<Rectangle3D>& m_rectangles;
   double m_angle_threshold;
   double m_distance_threshold;
+  double m_color_threshold;
+
   mutable Plane_3 m_current_plane;
+  std::array<double, 3> m_current_color;
   bool m_is_valid = false;
   
 public:
   Rectangle_region_type(const std::vector<Rectangle3D>& rectangles,
-                       double angle_threshold = 0.9,
-                       double distance_threshold = 0.5)
+                        double angle_threshold = 0.9,
+                        double distance_threshold = 0.5,
+                        double color_threshold = 0.2)
     : m_rectangles(rectangles), 
       m_angle_threshold(angle_threshold),
-      m_distance_threshold(distance_threshold) {}
+      m_distance_threshold(distance_threshold),
+      m_color_threshold(color_threshold) {}
   
   bool is_valid_region(const std::vector<Item>&) const { return m_is_valid; }
   
@@ -153,34 +133,45 @@ public:
       m_is_valid = false;
       return false;
     }
-    
+
     m_current_plane = Plane_3(m_rectangles[region[0]].center, m_rectangles[region[0]].normal);
 
-    if (region.size() >= 10) {
-      std::vector<Point_3> points;
-      points.reserve(region.size());
-      for (const auto& idx : region) {
-        points.push_back(m_rectangles[idx].center);
-        points.push_back(m_rectangles[idx].v1);
-        points.push_back(m_rectangles[idx].v2);
-        points.push_back(m_rectangles[idx].v3);
-        points.push_back(m_rectangles[idx].v4);
-      }
+    // if (region.size() >= 10) {
+    //   std::vector<Point_3> points;
+    //   points.reserve(region.size());
+    //   for (const auto& idx : region) {
+    //     points.push_back(m_rectangles[idx].center);
+    //     points.push_back(m_rectangles[idx].v1);
+    //     points.push_back(m_rectangles[idx].v2);
+    //     points.push_back(m_rectangles[idx].v3);
+    //     points.push_back(m_rectangles[idx].v4);
+    //   }
       
-      Plane_3 fitted_plane;
-      Point_3 centroid;
-      double quality = CGAL::linear_least_squares_fitting_3(
-        points.begin(), points.end(), fitted_plane, centroid, 
-        CGAL::Dimension_tag<0>() 
-      );
+    //   Plane_3 fitted_plane;
+    //   Point_3 centroid;
+    //   double quality = CGAL::linear_least_squares_fitting_3(
+    //     points.begin(), points.end(), fitted_plane, centroid, 
+    //     CGAL::Dimension_tag<0>() 
+    //   );
       
-      if (quality >= 0.7) {
-        m_current_plane = fitted_plane;
-      }
-      // else {
-      //   m_current_plane = Plane_3(m_rectangles[region[0]].center, m_rectangles[region[0]].normal);
-      // }
+    //   if (quality >= 0.8) {
+    //     m_current_plane = fitted_plane;
+    //   } else {
+    //     m_current_plane = Plane_3(m_rectangles[region[0]].center, m_rectangles[region[0]].normal);
+    //   }
+    // }
+
+    // Calculate the average RGB color of the current region
+    double r_sum = 0.0, g_sum = 0.0, b_sum = 0.0;
+    for (const auto& idx : region) {
+      r_sum += m_rectangles[idx].red;
+      g_sum += m_rectangles[idx].green;
+      b_sum += m_rectangles[idx].blue;
     }
+    double inv_size = 1.0 / region.size();
+    m_current_color[0] = r_sum * inv_size;
+    m_current_color[1] = g_sum * inv_size;
+    m_current_color[2] = b_sum * inv_size;
 
     m_is_valid = true;
     return true;
@@ -199,6 +190,16 @@ public:
     
     double distance = CGAL::sqrt(CGAL::squared_distance(cand_rect.center, m_current_plane));
     if (distance > m_distance_threshold) {
+      return false;
+    }
+
+    // Calculate Euclidean distance in RGB space
+    double dr = cand_rect.red - m_current_color[0];
+    double dg = cand_rect.green - m_current_color[1];
+    double db = cand_rect.blue - m_current_color[2];
+    double color_dist = std::sqrt(dr*dr + dg*dg + db*db);
+    // The maximum possible distance in [0,1] RGB space is sqrt(3) ~ 1.732.
+    if (color_dist > m_color_threshold) {
       return false;
     }
 
@@ -243,6 +244,7 @@ inline std::vector<std::vector<std::size_t>> detect_planar_regions(
   double neighbor_radius = 0.2,
   double angle_threshold = 0.9,
   double distance_threshold = 0.5,
+  double color_threshold = 0.20,
   std::size_t min_region_size = 10
 ) {
   std::cout << "\n==> detect_planar_regions() called" << std::endl;
@@ -257,7 +259,7 @@ inline std::vector<std::vector<std::size_t>> detect_planar_regions(
   Region_map_type region_map(region_map_vec);
   
   Rectangle_neighbor_query neighbor_query(rectangles, neighbor_radius);
-  Rectangle_region_type region_type(rectangles, angle_threshold, distance_threshold);
+  Rectangle_region_type region_type(rectangles, angle_threshold, distance_threshold, color_threshold);
   Rectangle_region_growing region_growing(
     items, 
     neighbor_query, 

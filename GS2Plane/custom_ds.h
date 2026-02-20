@@ -22,7 +22,7 @@ struct GaussianSplat {
 
 struct Rectangle3D {
   Point_3 center;
-  Point_3 a1_v1, a1_v2, a2_v1, a2_v2;
+  Point_3 v1, v2, v3, v4;
   Vector_3 normal;
   Vector_3 axis1, axis2;
   double pseudo_radius;
