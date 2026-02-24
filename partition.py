@@ -526,9 +526,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Partition a PLY pointcloud with cp_d0_dist')
     parser.add_argument('--ply', required=True, help='Path to input PLY file')
     parser.add_argument('--out', help='Path to output PLY file')
-    parser.add_argument('--k', type=int, default=8, help='k for k-NN graph')
-    parser.add_argument('--min-comp', type=float, default=10.0, help='min component weight (points)')
-    parser.add_argument('--max-it', type=int, default=30, help='cp_d0_dist max iterations')
+    parser.add_argument('--k', type=int, default=10, help='k for k-NN graph')
+    parser.add_argument('--min-comp', type=float, default=20, help='min component weight (points)')
+    parser.add_argument('--max-it', type=int, default=20, help='cp_d0_dist max iterations')
     parser.add_argument('--keep-largest', type=bool, default=True, help='Keep only the largest connected component of the k-NN graph')
     parser.add_argument('--verbose', action='store_true', help='Whether to print the point cloud feature values or not')
     parser.add_argument('--merge-coplanar', action='store_true', help='Enable hierarchical merging of co-planar superpoints')
@@ -558,12 +558,14 @@ if __name__ == "__main__":
 
     x = np.asfortranarray(X.T.astype(np.float32))
     first_edge, target = build_forward_star(n, neigh)
+    print(f"Graph built: {n} vertices, {target.shape[0]} edges")
 
     # Edge weights: exponential kernel
     eps = 1e-12
     flat_dists = np.concatenate([dists[i] for i in range(n)]).astype(np.float32)
     mean_dist = flat_dists.mean()
     edge_weights = np.exp(-flat_dists / (mean_dist + eps)).astype(np.float32)
+    print(edge_weights[:10])
 
     # Vertex weights: atomic points -> 1
     vert_weights = np.ones(n, dtype=np.float32)
