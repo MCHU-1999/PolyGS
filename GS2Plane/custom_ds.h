@@ -8,9 +8,11 @@ typedef Kernel::Plane_3 Plane_3;
 typedef CGAL::Surface_mesh<Point_3> Mesh;
 
 // Define a tuple to hold all Gaussian Splat properties
-typedef std::tuple<Point_3, Vector_3, double, double, double, 
+typedef std::tuple<Point_3, Vector_3, 
                    double, double, double, 
-                   double, double, double, double> GaussianTuple;
+                   double, double, double, 
+                   double, double, double, double,
+                   double> GaussianTuple;
 
 struct GaussianSplat {
   double x, y, z;
@@ -18,6 +20,7 @@ struct GaussianSplat {
   double f_dc_0, f_dc_1, f_dc_2;
   double scale_0, scale_1, scale_2;
   double rot_0, rot_1, rot_2, rot_3;
+  double opacity;
 };
 
 struct Rectangle3D {
