@@ -1,4 +1,5 @@
 .vscode/
+__pycache__
 build/
 example_pointcloud/
 data/
