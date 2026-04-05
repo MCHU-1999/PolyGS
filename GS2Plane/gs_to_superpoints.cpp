@@ -370,8 +370,8 @@ int main(int argc, char* argv[]) {
     }
 
     std::cout << "Building graph...\n";
-    // ForwardStarGraph fsg = create_forward_star(rectangles, 0.3, 0.0, 0.02, 0.9);
-    ForwardStarGraph fsg = create_forward_star_knn(rectangles, 10);
+    ForwardStarGraph fsg = create_forward_star(rectangles, 0.3, 0.0, 0.02, 0.9);
+    // ForwardStarGraph fsg = create_forward_star_knn(rectangles, 10);
 
     std::cout << "Calculating edge weights..." << std::endl;
     double sum_dist = 0.0;
