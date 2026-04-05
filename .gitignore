@@ -5,3 +5,4 @@ example_pointcloud/
 data/
 screenshots/
 .DS_Store
+*.ply

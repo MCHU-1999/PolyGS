@@ -39,6 +39,9 @@ add_subdirectory(GS2Plane)
 message(STATUS "Adding subdirectory: KSR")
 add_subdirectory(KSR)
 
+message(STATUS "Adding subdirectory: PC2Mesh")
+add_subdirectory(PC2Mesh)
+
 # The default "all" target will now build everything automatically
 # No need for a custom PolyGS target - just use the default behavior
 
