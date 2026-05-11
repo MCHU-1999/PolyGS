@@ -200,16 +200,13 @@ public:
     return m_polygons.size();
   }
 
-  /**
-   * 
-   */
   template<typename CGAL_NP_TEMPLATE_PARAMETERS>
-  std::size_t inject_planar_shapes(const CGAL_NP_CLASS& np = parameters::default_values()) {
+  std::size_t inject_planar_shapes(const std::vector<int>& plane_assignments, const CGAL_NP_CLASS& np = parameters::default_values()) {
     m_verbose = parameters::choose_parameter(parameters::get_parameter(np, internal_np::verbose), m_verbose);
     m_debug = parameters::choose_parameter(parameters::get_parameter(np, internal_np::debug), m_debug);
 
     if (m_verbose)
-      std::cout << std::endl << "--- DETECTING PLANAR SHAPES: " << std::endl;
+      std::cout << std::endl << "--- INJECTING PLANAR SHAPES: " << std::endl;
 
     m_planes.clear();
     m_polygons.clear();
@@ -219,13 +216,91 @@ public:
     m_regions.clear();
     m_planar_regions.clear();
 
-    create_planar_shapes(np);
+    if (m_points.size() < 3) {
+      if (m_verbose) std::cout << "* no points found, skipping" << std::endl;
+      return 0;
+    }
+
+    FT xmin, ymin, zmin, xmax, ymax, zmax;
+    auto pit = m_points.begin();
+    const Point_3& p0 = get(m_point_map, *pit);
+    xmin = xmax = p0.x();
+    ymin = ymax = p0.y();
+    zmin = zmax = p0.z();
+
+    pit++;
+    while (pit != m_points.end()) {
+      const Point_3& p = get(m_point_map, *pit);
+      xmin = (std::min)(xmin, p.x());
+      xmax = (std::max)(xmax, p.x());
+      ymin = (std::min)(ymin, p.y());
+      ymax = (std::max)(ymax, p.y());
+      zmin = (std::min)(zmin, p.z());
+      zmax = (std::max)(zmax, p.z());
+      pit++;
+    }
+
+    FT diag = CGAL::sqrt((xmax - xmin) * (xmax - xmin) + (ymax - ymin) * (ymax - ymin) + (zmax - zmin) * (zmax - zmin));
+    const FT max_distance_to_plane = parameters::choose_parameter(parameters::get_parameter(np, internal_np::maximum_distance), diag * 0.02);
+    m_detection_distance_tolerance = max_distance_to_plane;
+
+    using Item = typename std::iterator_traits<typename Point_range::iterator>::value_type;
+    std::map<int, std::vector<Item> > grouped_pts;
+    std::size_t unassigned = 0;
+    // Let's just check the first point's normal length
+    if (m_points.begin() != m_points.end()) {
+      auto n0 = get(m_normal_map, *m_points.begin());
+      std::cout << "Normal of first point: " << n0 << " length sq: " << n0.squared_length() << std::endl;
+    }
+
+    pit = m_points.begin();
+    for (std::size_t i = 0; i < plane_assignments.size() && pit != m_points.end(); ++i, ++pit) {
+      int label = plane_assignments[i];
+      if (label <= 0) { // 0 or negative is unassigned
+        unassigned++;
+      } else {
+        grouped_pts[label].push_back(*pit);
+      }
+    }
+
+    for (auto& pair : grouped_pts) {
+      if (pair.second.size() < 3) {
+        if (m_verbose) {
+          std::cout << "Warning: skipping plane " << pair.first << " because it has < 3 points (" << pair.second.size() << " points)" << std::endl;
+        }
+        unassigned += pair.second.size();
+        continue;
+      }
+
+      std::vector<Point_3> pts;
+      pts.reserve(pair.second.size());
+      for (const auto& idx : pair.second) {
+        pts.push_back(get(m_point_map, idx));
+      }
+
+      Plane_3 plane;
+      CGAL::linear_least_squares_fitting_3(pts.begin(), pts.end(), plane, CGAL::Dimension_tag<0>());
+
+      m_regions.push_back(std::make_pair(plane, pair.second));
+    }
+
+    std::size_t num_shapes = m_regions.size();
+    std::cout << "inject_planar_shapes: created " << num_shapes << " regions from " << m_points.size() << " points (" << unassigned << " unassigned)" << std::endl;
+    finalize_planar_shapes(unassigned, num_shapes, max_distance_to_plane);
 
     CGAL_assertion(m_planes.size() == m_polygons.size());
     CGAL_assertion(m_polygons.size() == m_region_map.size());
 
     return m_polygons.size();
   }
+
+  template<typename CGAL_NP_TEMPLATE_PARAMETERS>
+  void injection_and_partition(const std::vector<int>& plane_assignments, std::size_t k, const CGAL_NP_CLASS& np = parameters::default_values()) {
+    inject_planar_shapes(plane_assignments, np);
+    initialize_partition(np);
+    partition(k);
+  }
+
 
   /*!
   \brief returns the support planes of the detected and regularized shapes.
@@ -559,6 +634,15 @@ public:
 
     gc.solve(m_face_neighbors_lcc, m_face_area_lcc, m_cost_matrix, m_labels);
 
+    std::size_t inside_count = 0, outside_count = 0;
+    for (std::size_t l : m_labels) {
+      if (l == 0) inside_count++;
+      else outside_count++;
+    }
+    std::cout << "reconstruct: labels size=" << m_labels.size()
+              << " inside=" << inside_count << " outside=" << outside_count
+              << " force=" << (m_total_inliers * 3) << std::endl;
+
     reconstructed_model_polylist_lcc(pit, polyit, lambda);
   }
 
@@ -766,7 +850,11 @@ private:
 
     m_face_inliers.clear();
     m_face_inliers.resize(m_faces_lcc.size());
+    std::cout << "setup_energyterms: input_planes=" << m_kinetic_partition.input_planes().size()
+              << " m_regions=" << m_regions.size()
+              << " m_faces_lcc=" << m_faces_lcc.size() << std::endl;
     collect_points_for_faces_lcc();
+    std::cout << "setup_energyterms: m_total_inliers=" << m_total_inliers << std::endl;
     count_volume_votes_lcc();
 
     if (m_verbose)
@@ -1924,6 +2012,10 @@ private:
       }
     }
 
+    finalize_planar_shapes(unassigned, num_shapes, max_distance_to_plane);
+  }
+
+  void finalize_planar_shapes(std::size_t unassigned, std::size_t num_shapes, FT max_distance_to_plane) {
     // Estimate ground plane by finding a low mostly horizontal plane
     std::vector<std::size_t> candidates;
     FT low_z_peak = (std::numeric_limits<FT>::max)();
@@ -2009,8 +2101,6 @@ private:
       std::cout << "found " << num_shapes << " planar shapes regularized into " << m_planar_regions.size() << std::endl;
       std::cout << "from " << m_points.size() << " input points " << unassigned << " remain unassigned" << std::endl;
     }
-
-    num_shapes = m_planar_regions.size();
 
     m_kinetic_partition = KSP(m_polygon_pts, m_polygon_indices);
   }

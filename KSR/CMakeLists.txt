@@ -1,3 +1,4 @@
+cmake_minimum_required(VERSION 3.16)
 # KSR subproject - don't set minimum version or build type
 # (inherited from parent)
 project(KSR)
