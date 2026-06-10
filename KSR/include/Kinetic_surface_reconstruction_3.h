@@ -284,8 +284,70 @@ public:
       m_regions.push_back(std::make_pair(plane, pair.second));
     }
 
+    // --- Regularization (mirrors create_planar_shapes) ---
+    const bool regularize_axis_symmetry = parameters::choose_parameter(parameters::get_parameter(np, internal_np::regularize_axis_symmetry), false);
+    const bool regularize_coplanarity   = parameters::choose_parameter(parameters::get_parameter(np, internal_np::regularize_coplanarity), true);
+    const bool regularize_orthogonality = parameters::choose_parameter(parameters::get_parameter(np, internal_np::regularize_orthogonality), false);
+    const bool regularize_parallelism   = parameters::choose_parameter(parameters::get_parameter(np, internal_np::regularize_parallelism), false);
+    const FT angle_tolerance = parameters::choose_parameter(parameters::get_parameter(np, internal_np::angle_tolerance), FT(5));
+    const FT maximum_offset  = parameters::choose_parameter(parameters::get_parameter(np, internal_np::maximum_offset), max_distance_to_plane * FT(0.5));
+
+    if (!m_regions.empty() && (regularize_axis_symmetry || regularize_coplanarity || regularize_orthogonality || regularize_parallelism)) {
+      if (m_verbose) std::cout << "* regularizing " << m_regions.size() << " injected planes" << std::endl;
+
+      // Build label → region-index mapping (only labels that passed the size filter).
+      std::map<int, int> label_to_region;
+      {
+        int ridx = 0;
+        for (const auto& pair : grouped_pts)
+          if (pair.second.size() >= 3)
+            label_to_region[pair.first] = ridx++;
+      }
+
+      // Build per-point plane-index vector (Point_set_3::Index → region index, -1 = unassigned).
+      std::vector<int> point_region(m_points.size(), -1);
+      {
+        auto pit2 = m_points.begin();
+        for (std::size_t i = 0; i < plane_assignments.size() && pit2 != m_points.end(); ++i, ++pit2) {
+          auto it = label_to_region.find(plane_assignments[i]);
+          if (it != label_to_region.end())
+            point_region[static_cast<std::size_t>(*pit2)] = it->second;
+        }
+      }
+      auto pim = CGAL::make_property_map(point_region);
+
+      auto plane_range = m_regions | boost::adaptors::transformed(
+        [](typename Region_growing::Primitive_and_region& pr) -> Plane_3& { return pr.first; });
+
+      CGAL::Shape_regularization::Planes::regularize_planes(
+        plane_range, m_points,
+        CGAL::parameters::plane_index_map(pim)
+          .point_map(m_point_map)
+          .regularize_axis_symmetry(regularize_axis_symmetry)
+          .regularize_orthogonality(regularize_orthogonality)
+          .regularize_parallelism(regularize_parallelism)
+          .regularize_coplanarity(regularize_coplanarity)
+          .maximum_angle(angle_tolerance)
+          .maximum_offset(maximum_offset));
+
+      // Merge regions that were snapped to the same plane by regularization.
+      for (std::size_t i = 0; i < m_regions.size() - 1; i++) {
+        for (std::size_t j = i + 1; j < m_regions.size(); j++) {
+          if (m_regions[i].first == m_regions[j].first || m_regions[i].first.opposite() == m_regions[j].first) {
+            std::move(m_regions[j].second.begin(), m_regions[j].second.end(), std::back_inserter(m_regions[i].second));
+            m_regions.erase(m_regions.begin() + j);
+            j--;
+          }
+        }
+      }
+
+      if (m_verbose) std::cout << "* after regularization: " << m_regions.size() << " planes" << std::endl;
+    }
+    // --- End regularization ---
+
     std::size_t num_shapes = m_regions.size();
-    std::cout << "inject_planar_shapes: created " << num_shapes << " regions from " << m_points.size() << " points (" << unassigned << " unassigned)" << std::endl;
+    std::cout << "inject_planar_shapes: " << num_shapes << " planes (after regularization) from "
+              << m_points.size() << " points (" << unassigned << " unassigned)" << std::endl;
     finalize_planar_shapes(unassigned, num_shapes, max_distance_to_plane);
 
     CGAL_assertion(m_planes.size() == m_polygons.size());

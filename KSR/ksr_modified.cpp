@@ -134,37 +134,26 @@ int main(int argc, char **argv) {
   }
 
   std::map<typename KSR::KSP::Face_support, bool> external_nodes;
-  // The bottom is solid (Inside)
-  external_nodes[KSR::KSP::Face_support::ZMIN] = true;
-  // The top and sides are empty (Outside)
+  // All bbox faces prefer "outside" label except YMAX (intentional for model orientation).
+  external_nodes[KSR::KSP::Face_support::ZMIN] = false;
   external_nodes[KSR::KSP::Face_support::ZMAX] = false;
   external_nodes[KSR::KSP::Face_support::XMIN] = false;
   external_nodes[KSR::KSP::Face_support::XMAX] = false;
   external_nodes[KSR::KSP::Face_support::YMIN] = false;
-  external_nodes[KSR::KSP::Face_support::YMAX] = false;
+  external_nodes[KSR::KSP::Face_support::YMAX] = true;
+ 
+  auto param =CGAL::parameters::k_neighbors(8)
+    // Octree controls: suppress axis-aligned octree split planes (Face_support::OCTREE_FACE = -7)
+    // that appear in output when #planes > max_octree_node_size. Raise threshold to avoid splits.
+    // .max_octree_depth(1)          // at most 1 level of octree subdivision
+    // .max_octree_node_size(10000)  // only split if >10000 polygons per node (effectively disables splits)
+    // Regularization: applies to both inject_planar_shapes and detect_planar_shapes paths.
+    .regularize_parallelism(true)
+    .regularize_coplanarity(true)
+    .regularize_orthogonality(true)
+    .angle_tolerance(15)
+    .maximum_offset(0.05); // maximum distance between two parallel planes to be coplanar
 
-  auto param =
-      CGAL::parameters::k_neighbors(8)
-          .maximum_distance(0.1) // the maximum distance from a point to a plane
-          .maximum_angle(
-              10) // the maximum angle in degrees between the normal associated
-                  // with a point and the normal of a plane
-          .minimum_region_size(
-              20) // the minimum number of points a region must have
-          .reorient_bbox(
-              true) // Setting reorient_bbox to true aligns the x-axis of the
-                    // bounding box with the direction of the largest variation
-                    // in horizontal direction of the input data while
-                    // maintaining the z-axis.
-          .regularize_parallelism(
-              true) // whether parallelism should be regularized or not
-          .regularize_coplanarity(
-              true) // whether coplanarity should be regularized or not
-          .regularize_orthogonality(
-              true) // whether orthogonality should be regularized or not
-          .angle_tolerance(10)   // Idk
-          .maximum_offset(0.05); // maximum distance between two parallel planes
-                                 // to be considered coplanar
 
   // Algorithm.
   KSR ksr(point_set, param);
@@ -179,10 +168,16 @@ int main(int argc, char **argv) {
     for (int v : plane_assignments)
       max_label = std::max(max_label, v);
     std::cout << "  Max plane label: " << max_label << std::endl;
-    ksr.injection_and_partition(plane_assignments, 3, param);
+    ksr.injection_and_partition(plane_assignments, 2, param);
     std::cout << "injection_and_partition completed." << std::endl;
     std::cout << "  Number of volumes: "
               << ksr.kinetic_partition().number_of_volumes() << std::endl;
+    // Diagnostic: how many planes did KSP actually receive?
+    // If less than max_label, coplanar planes were deduplicated by KSP.
+    // If output contains axis-aligned phantom planes, octree subdivision is the cause.
+    std::cout << "  KSP input_planes count: "
+              << ksr.kinetic_partition().input_planes().size()
+              << " (injected " << max_label << " labeled planes)" << std::endl;
   } else {
     std::cout << "No pts_ins_assignment property found. Falling back to "
                  "internal CGAL shape detection."
@@ -192,28 +187,24 @@ int main(int argc, char **argv) {
 
   std::vector<Point_3> vtx;
   std::vector<std::vector<std::size_t>> polylist;
-  std::vector<FT> lambdas{0.1, 0.3, 0.5, 0.7};
+  std::vector<FT> lambdas{0.1, 0.3, 0.5, 0.7, 0.9};
 
   bool non_empty = false;
   for (FT l : lambdas) {
     vtx.clear();
     polylist.clear();
-    std::cout << "Reconstructing with lambda=" << CGAL::to_double(l) << "..."
-              << std::endl;
-    // ksr.reconstruct_with_ground(l, std::back_inserter(vtx),
-    // std::back_inserter(polylist));
-    ksr.reconstruct(l, external_nodes, std::back_inserter(vtx),
-                    std::back_inserter(polylist));
-    std::cout << "  => vtx=" << vtx.size() << " polylist=" << polylist.size()
-              << std::endl;
+    // std::cout << "Reconstructing with lambda=" << CGAL::to_double(l) << "..." << std::endl;
+    // ksr.reconstruct_with_ground(l, std::back_inserter(vtx), std::back_inserter(polylist));
+    ksr.reconstruct(l, external_nodes, std::back_inserter(vtx), std::back_inserter(polylist));
+    
+    std::cout << "  => vtx=" << vtx.size() << " polylist=" << polylist.size() << std::endl;
 
     if (polylist.size() > 0) {
       non_empty = true;
 
       // Repair the soup: removes duplicates and degenerated faces
       CGAL::Polygon_mesh_processing::repair_polygon_soup(vtx, polylist);
-      // Orient the soup: fixes inconsistent normals which cause non-manifold
-      // errors
+      // Orient the soup: fixes inconsistent normals which cause non-manifold errors
       CGAL::Polygon_mesh_processing::orient_polygon_soup(vtx, polylist);
 
       std::string lstr = std::to_string(CGAL::to_double(l));

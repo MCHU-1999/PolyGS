@@ -71,25 +71,24 @@ int main(int argc, char** argv) {
   }
 
   std::map<typename KSR::KSP::Face_support, bool> external_nodes;
-  // The bottom is solid (Inside)
-  external_nodes[KSR::KSP::Face_support::YMIN] = true;
-  // The top and sides are empty (Outside)
-  external_nodes[KSR::KSP::Face_support::ZMAX] = false;
   external_nodes[KSR::KSP::Face_support::ZMIN] = false;
+  external_nodes[KSR::KSP::Face_support::ZMAX] = false;
   external_nodes[KSR::KSP::Face_support::XMIN] = false;
   external_nodes[KSR::KSP::Face_support::XMAX] = false;
-  external_nodes[KSR::KSP::Face_support::YMAX] = false;
+  external_nodes[KSR::KSP::Face_support::YMIN] = false;
+  external_nodes[KSR::KSP::Face_support::YMAX] = true;
  
-  auto param = CGAL::parameters::k_neighbors(8)
-    .maximum_distance(0.1)          // the maximum distance from a point to a plane
-    .maximum_angle(10)              // the maximum angle in degrees between the normal associated with a point and the normal of a plane
-    .minimum_region_size(100)        // the minimum number of points a region must have
-    .reorient_bbox(true)            // Setting reorient_bbox to true aligns the x-axis of the bounding box with the direction of the largest variation in horizontal direction of the input data while maintaining the z-axis.
-    .regularize_parallelism(true)   // whether parallelism should be regularized or not
-    .regularize_coplanarity(true)   // whether coplanarity should be regularized or not
+  auto param =CGAL::parameters::k_neighbors(8)
+    .maximum_distance(0.05) // the maximum distance from a point to a plane
+    .maximum_angle(15)  // the maximum angle in degrees between the normal associated
+                        // with a point and the normal of a plane
+    .minimum_region_size(20) // the minimum number of points a region must have
+    .regularize_parallelism(true) // whether parallelism should be regularized or not
+    .regularize_coplanarity(true) // whether coplanarity should be regularized or not
     .regularize_orthogonality(true) // whether orthogonality should be regularized or not
-    .angle_tolerance(10)            // Idk
-    .maximum_offset(0.05);          // maximum distance between two parallel planes to be considered coplanar
+    .angle_tolerance(15)   // Idk
+    .maximum_offset(0.05); // maximum distance between two parallel planes
+                            // to be considered coplanar
 
   // Algorithm.
   KSR ksr(point_set, param);
@@ -97,14 +96,14 @@ int main(int argc, char** argv) {
 
   std::vector<Point_3> vtx;
   std::vector<std::vector<std::size_t> > polylist;
-  std::vector<FT> lambdas{0.1, 0.3, 0.5};
+  std::vector<FT> lambdas{0.1, 0.3, 0.5, 0.7, 0.9};
  
   bool non_empty = false;
   for (FT l : lambdas) {
     vtx.clear();
     polylist.clear();
-    ksr.reconstruct_with_ground(l, std::back_inserter(vtx), std::back_inserter(polylist));
-    // ksr.reconstruct(l, external_nodes, std::back_inserter(vtx), std::back_inserter(polylist));
+    // ksr.reconstruct_with_ground(l, std::back_inserter(vtx), std::back_inserter(polylist));
+    ksr.reconstruct(l, external_nodes, std::back_inserter(vtx), std::back_inserter(polylist));
  
     if (polylist.size() > 0) {
       non_empty = true;
