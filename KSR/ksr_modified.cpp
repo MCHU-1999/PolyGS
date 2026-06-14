@@ -140,24 +140,24 @@ int main(int argc, char **argv) {
 
   std::map<typename KSR::KSP::Face_support, bool> external_nodes;
   // All bbox faces prefer "outside" label except YMAX (intentional for model orientation).
-  external_nodes[KSR::KSP::Face_support::ZMIN] = false;
+  external_nodes[KSR::KSP::Face_support::ZMIN] = true;
   external_nodes[KSR::KSP::Face_support::ZMAX] = false;
   external_nodes[KSR::KSP::Face_support::XMIN] = false;
   external_nodes[KSR::KSP::Face_support::XMAX] = false;
   external_nodes[KSR::KSP::Face_support::YMIN] = false;
-  external_nodes[KSR::KSP::Face_support::YMAX] = true;
+  external_nodes[KSR::KSP::Face_support::YMAX] = false;
  
   auto param =CGAL::parameters::k_neighbors(8)
-    // Octree controls: suppress axis-aligned octree split planes (Face_support::OCTREE_FACE = -7)
-    // that appear in output when #planes > max_octree_node_size. Raise threshold to avoid splits.
-    // .max_octree_depth(1)          // at most 1 level of octree subdivision
-    // .max_octree_node_size(10000)  // only split if >10000 polygons per node (effectively disables splits)
-    // Regularization: applies to both inject_planar_shapes and detect_planar_shapes paths.
-    .regularize_parallelism(true)
-    .regularize_coplanarity(true)
-    .regularize_orthogonality(true)
-    .angle_tolerance(15)
-    .maximum_offset(0.05); // maximum distance between two parallel planes to be coplanar
+    .maximum_distance(0.05) // the maximum distance from a point to a plane
+    .maximum_angle(15)  // the maximum angle in degrees between the normal associated
+                        // with a point and the normal of a plane
+    .minimum_region_size(100) // the minimum number of points a region must have
+    .regularize_parallelism(true) // whether parallelism should be regularized or not
+    .regularize_coplanarity(true) // whether coplanarity should be regularized or not
+    .regularize_orthogonality(true) // whether orthogonality should be regularized or not
+    .angle_tolerance(15)   // Idk
+    .maximum_offset(0.05); // maximum distance between two parallel planes
+                            // to be considered coplanar
 
 
   // Algorithm.
@@ -187,7 +187,7 @@ int main(int argc, char **argv) {
     std::cout << "No pts_ins_assignment property found. Falling back to "
                  "internal CGAL shape detection."
               << std::endl;
-    ksr.detection_and_partition(3, param);
+    ksr.detection_and_partition(2, param);
   }
 
   std::vector<Point_3> vtx;

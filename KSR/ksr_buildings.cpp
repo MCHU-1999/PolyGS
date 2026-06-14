@@ -76,12 +76,13 @@ int main(int argc, char** argv) {
   }
 
   std::map<typename KSR::KSP::Face_support, bool> external_nodes;
-  external_nodes[KSR::KSP::Face_support::ZMIN] = false;
+  // All bbox faces prefer "outside" label except YMAX (intentional for model orientation).
+  external_nodes[KSR::KSP::Face_support::ZMIN] = true;
   external_nodes[KSR::KSP::Face_support::ZMAX] = false;
   external_nodes[KSR::KSP::Face_support::XMIN] = false;
   external_nodes[KSR::KSP::Face_support::XMAX] = false;
   external_nodes[KSR::KSP::Face_support::YMIN] = false;
-  external_nodes[KSR::KSP::Face_support::YMAX] = true;
+  external_nodes[KSR::KSP::Face_support::YMAX] = false;
  
   auto param =CGAL::parameters::k_neighbors(8)
     .maximum_distance(0.05) // the maximum distance from a point to a plane

@@ -244,6 +244,10 @@ public:
     const FT max_distance_to_plane = parameters::choose_parameter(parameters::get_parameter(np, internal_np::maximum_distance), diag * 0.02);
     m_detection_distance_tolerance = max_distance_to_plane;
 
+    // Honour minimum_region_size: planes with fewer points are discarded (same semantics as detect path).
+    const std::size_t min_region_size = parameters::choose_parameter(parameters::get_parameter(np, internal_np::minimum_region_size), std::size_t(3));
+    const std::size_t effective_min_size = (std::max)(min_region_size, std::size_t(3)); // need at least 3 pts for plane fitting
+
     using Item = typename std::iterator_traits<typename Point_range::iterator>::value_type;
     std::map<int, std::vector<Item> > grouped_pts;
     std::size_t unassigned = 0;
@@ -264,9 +268,9 @@ public:
     }
 
     for (auto& pair : grouped_pts) {
-      if (pair.second.size() < 3) {
+      if (pair.second.size() < effective_min_size) {
         if (m_verbose) {
-          std::cout << "Warning: skipping plane " << pair.first << " because it has < 3 points (" << pair.second.size() << " points)" << std::endl;
+          std::cout << "Warning: skipping plane " << pair.first << " because it has < " << effective_min_size << " points (" << pair.second.size() << " points)" << std::endl;
         }
         unassigned += pair.second.size();
         continue;
@@ -274,14 +278,35 @@ public:
 
       std::vector<Point_3> pts;
       pts.reserve(pair.second.size());
+      // Vector_3 avg_normal(0, 0, 0);
       for (const auto& idx : pair.second) {
         pts.push_back(get(m_point_map, idx));
+        // avg_normal = avg_normal + get(m_normal_map, idx);
       }
 
       Plane_3 plane;
       CGAL::linear_least_squares_fitting_3(pts.begin(), pts.end(), plane, CGAL::Dimension_tag<0>());
 
+      // // Orient the fitted plane to agree with the average inlier normal (which reflects the
+      // // scanner/point-cloud orientation for this region).
+      // if (avg_normal * plane.orthogonal_vector() < FT(0))
+      //   plane = plane.opposite();
+
+      // // Re-orient every inlier point's stored normal to agree with the oriented plane normal.
+      // // This is critical for count_volume_votes_lcc: it uses m_normal_map directly to decide
+      // // which adjacent volume is "inside" vs "outside". If mst_orient_normals propagated the
+      // // wrong orientation into a concave region (flipping its normals to match the surrounding
+      // // convex surface), the vote for the concave void is inverted and lambda cannot fix it.
+      // const Vector_3 plane_normal = plane.orthogonal_vector() /
+      //                               CGAL::sqrt(plane.orthogonal_vector().squared_length());
+      // for (const auto& idx : pair.second) {
+      //   Vector_3 n = get(m_normal_map, idx);
+      //   if (n * plane_normal < FT(0))
+      //     put(m_normal_map, idx, -n);
+      // }
+
       m_regions.push_back(std::make_pair(plane, pair.second));
+
     }
 
     // --- Regularization (mirrors create_planar_shapes) ---
@@ -300,7 +325,7 @@ public:
       {
         int ridx = 0;
         for (const auto& pair : grouped_pts)
-          if (pair.second.size() >= 3)
+          if (pair.second.size() >= effective_min_size)  // must match the filter used above
             label_to_region[pair.first] = ridx++;
       }
 
